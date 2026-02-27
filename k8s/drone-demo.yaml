@@ -1,0 +1,221 @@
+# =============================================================================
+#  Drone Demo — Kubernetes Manifests
+#  Deploys dashboard + simulator on the AKS Arc cluster
+# =============================================================================
+#
+#  Usage:
+#    1. Create the namespace & non-secret config:
+#         kubectl apply -f k8s/drone-demo.yaml
+#    2. Create the secrets (edit drone-demo-secrets.yaml first):
+#         kubectl apply -f k8s/drone-demo-secrets.yaml
+#    3. Wait for pods to start:
+#         kubectl get pods -n drone-demo -w
+#
+# =============================================================================
+
+# ── Namespace ────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: drone-demo
+  labels:
+    app.kubernetes.io/part-of: mwc26-demo
+
+---
+# ── ConfigMap — non-secret configuration ─────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: drone-demo-config
+  namespace: drone-demo
+data:
+  # Dashboard settings
+  DEMO_MODE: "true"
+  DASHBOARD_PORT: "5000"
+  DRONE_COUNT: "5"
+  EVENTHUB_CONSUMER_GROUP: "drone-telemetry"
+
+  # Edge AI — in-cluster Foundry Local endpoint (no port-forward needed)
+  EDGE_AI_ENABLED: "true"
+  EDGE_AI_ENDPOINT: "https://phi-3-deployment.foundry-local.svc:5000"
+  EDGE_AI_MODEL: "Phi-3-mini-4k-instruct-cuda-gpu:1"
+  EDGE_AI_INTERVAL: "15"
+
+  # Simulator settings
+  IOT_HUB_NAME: "pdx-iothub"
+  SEND_INTERVAL_SECONDS: "5"
+
+---
+# ── Dashboard Deployment ─────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dashboard
+  namespace: drone-demo
+  labels:
+    app: dashboard
+    app.kubernetes.io/part-of: mwc26-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dashboard
+  template:
+    metadata:
+      labels:
+        app: dashboard
+    spec:
+      containers:
+        - name: dashboard
+          image: acxcontregwus2-c6chcgfjardafsb5.azurecr.io/drone-demo/dashboard:latest
+          ports:
+            - containerPort: 5000
+              name: http
+          envFrom:
+            - configMapRef:
+                name: drone-demo-config
+            - secretRef:
+                name: drone-demo-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 5000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+      imagePullSecrets:
+        - name: acr-pull-secret
+      nodeSelector:
+        msft.microsoft/nodepool-name: pdx-aks-ead6c2bf-pdxuser
+
+---
+# ── Dashboard Service ────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: dashboard
+  namespace: drone-demo
+  labels:
+    app: dashboard
+spec:
+  selector:
+    app: dashboard
+  ports:
+    - port: 80
+      targetPort: 5000
+      name: http
+  type: ClusterIP
+
+---
+# ── Simulator Deployment ─────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: simulator
+  namespace: drone-demo
+  labels:
+    app: simulator
+    app.kubernetes.io/part-of: mwc26-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: simulator
+  template:
+    metadata:
+      labels:
+        app: simulator
+    spec:
+      containers:
+        - name: simulator
+          image: acxcontregwus2-c6chcgfjardafsb5.azurecr.io/drone-demo/simulator:latest
+          envFrom:
+            - configMapRef:
+                name: drone-demo-config
+            - secretRef:
+                name: drone-demo-secrets
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+      imagePullSecrets:
+        - name: acr-pull-secret
+      nodeSelector:
+        msft.microsoft/nodepool-name: pdx-aks-ead6c2bf-pdxuser
+
+---
+# ── Self-Signed ClusterIssuer (for TLS) ──────────────────────────────────────
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: drone-demo-selfsigned
+spec:
+  selfSigned: {}
+
+---
+# ── TLS Certificate ──────────────────────────────────────────────────────────
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: drone-demo-tls
+  namespace: drone-demo
+spec:
+  secretName: drone-demo-tls
+  issuerRef:
+    name: drone-demo-selfsigned
+    kind: ClusterIssuer
+  dnsNames:
+    - adaptivecloudlab.com
+    - "*.adaptivecloudlab.com"
+  duration: 8760h   # 1 year
+  renewBefore: 720h  # 30 days
+
+---
+# ── Ingress ──────────────────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: dashboard
+  namespace: drone-demo
+  labels:
+    app: dashboard
+  annotations:
+    # WebSocket support for Socket.IO
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$remote_addr"
+    # Allow large request bodies (for telemetry)
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - mwc.adaptivecloudlab.com
+      secretName: drone-demo-tls
+  rules:
+    - host: mwc.adaptivecloudlab.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: dashboard
+                port:
+                  number: 80
