@@ -1,0 +1,307 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Drone Network Monitor – Dark Kiosk Theme
+   MWC 2026 • Azure IoT
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* Palette */
+  --bg:           #0a0e17;
+  --bg-card:      #111827;
+  --bg-panel:     #0f1521;
+  --bg-header:    #0d1220;
+  --border:       #1e293b;
+  --text:         #e2e8f0;
+  --text-dim:     #94a3b8;
+  --accent:       #38bdf8;   /* sky-400 */
+  --accent-glow:  rgba(56, 189, 248, 0.25);
+  --green:        #22c55e;
+  --amber:        #f59e0b;
+  --red:          #ef4444;
+  --purple:       #a78bfa;
+
+  /* Layout */
+  --header-h:     56px;
+  --panel-w:      380px;
+  --agg-h:        64px;
+  --radius:       10px;
+  --card-gap:     12px;
+}
+
+/* ── Reset ────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  height: 100%; width: 100%;
+  overflow: hidden;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  background: var(--bg);
+  color: var(--text);
+  cursor: default;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Header ───────────────────────────────────────────────────────── */
+#topbar {
+  position: fixed; inset: 0 0 auto 0;
+  height: var(--header-h);
+  background: var(--bg-header);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 24px;
+  z-index: 1000;
+  backdrop-filter: blur(12px);
+}
+.brand { display: flex; align-items: center; gap: 14px; }
+.brand .logo { color: var(--accent); }
+.brand h1 {
+  font-size: 18px; font-weight: 600; letter-spacing: -0.02em;
+  background: linear-gradient(135deg, var(--accent), var(--purple));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+.brand .subtitle { font-size: 11px; color: var(--text-dim); letter-spacing: 0.05em; text-transform: uppercase; }
+
+.status-bar { display: flex; align-items: center; gap: 16px; }
+.badge {
+  padding: 3px 10px; border-radius: 999px;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+}
+.badge-off  { background: rgba(239,68,68,0.15); color: var(--red); }
+.badge-on   { background: rgba(34,197,94,0.15); color: var(--green); }
+.badge-info { background: rgba(56,189,248,0.12); color: var(--accent); }
+#clock { font-size: 13px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+
+/* ── Main layout ──────────────────────────────────────────────────── */
+main {
+  position: fixed;
+  inset: var(--header-h) 0 0 0;
+  display: flex;
+}
+
+/* Map */
+#map-wrapper {
+  flex: 1; position: relative;
+}
+#map {
+  width: 100%; height: 100%;
+  background: var(--bg);
+}
+/* remove leaflet default attribution styling clutter */
+.leaflet-control-attribution { display: none !important; }
+
+/* Aggregate bar overlaid at bottom of map */
+#aggregate-bar {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  height: var(--agg-h);
+  background: linear-gradient(to top, rgba(10,14,23,0.95), rgba(10,14,23,0.75));
+  backdrop-filter: blur(8px);
+  display: flex; align-items: center; justify-content: space-around;
+  padding: 0 32px;
+  z-index: 800;
+  border-top: 1px solid var(--border);
+}
+.agg-item { text-align: center; }
+.agg-label { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); margin-bottom: 2px; }
+.agg-value { display: block; font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--accent); }
+
+/* ── Side panel ───────────────────────────────────────────────────── */
+#panel {
+  width: var(--panel-w); min-width: var(--panel-w);
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+#panel h2 {
+  padding: 16px 20px 12px;
+  font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+#drone-cards {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--card-gap);
+  display: flex; flex-direction: column; gap: var(--card-gap);
+}
+/* thin scrollbar */
+#drone-cards::-webkit-scrollbar { width: 4px; }
+#drone-cards::-webkit-scrollbar-track { background: transparent; }
+#drone-cards::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+/* ── Drone card ───────────────────────────────────────────────────── */
+.drone-card {
+  background: var(--bg-card);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  padding: 14px 16px;
+  transition: border-color 0.3s, box-shadow 0.3s;
+}
+.drone-card:hover,
+.drone-card.pulse {
+  border-color: var(--accent);
+  box-shadow: 0 0 20px var(--accent-glow);
+}
+.drone-card .card-header {
+  display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;
+}
+.drone-card .card-title {
+  font-size: 14px; font-weight: 600;
+}
+.drone-card .card-status {
+  font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 2px 8px; border-radius: 999px;
+}
+.status-patrolling { background: rgba(34,197,94,0.15); color: var(--green); }
+.status-hovering   { background: rgba(245,158,11,0.15); color: var(--amber); }
+.status-returning  { background: rgba(239,68,68,0.15); color: var(--red); }
+.status-landed     { background: rgba(148,163,184,0.15); color: var(--text-dim); }
+
+/* Metric grid inside card */
+.metric-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+}
+.metric {
+  display: flex; justify-content: space-between; align-items: baseline;
+}
+.metric-label {
+  font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em;
+}
+.metric-value {
+  font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums;
+}
+/* Color coding for signal quality */
+.sig-good  { color: var(--green); }
+.sig-ok    { color: var(--amber); }
+.sig-poor  { color: var(--red); }
+
+/* Battery bar */
+.battery-row {
+  margin-top: 8px;
+  display: flex; align-items: center; gap: 8px;
+}
+.battery-bar-bg {
+  flex: 1; height: 6px; border-radius: 3px;
+  background: rgba(255,255,255,0.06);
+  overflow: hidden;
+}
+.battery-bar-fill {
+  height: 100%; border-radius: 3px;
+  transition: width 0.6s ease, background 0.6s ease;
+}
+.battery-label {
+  font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; min-width: 40px; text-align: right;
+}
+
+/* ── AI Insights Section ──────────────────────────────────────────── */
+#ai-section {
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  padding: 0;
+}
+#ai-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 14px 20px 10px;
+  font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--purple);
+}
+#ai-header svg { color: var(--purple); flex-shrink: 0; }
+.ai-model-tag {
+  margin-left: auto;
+  font-size: 10px; font-weight: 500;
+  padding: 2px 8px; border-radius: 999px;
+  background: rgba(167,139,250,0.12); color: var(--purple);
+  letter-spacing: 0.02em; text-transform: none;
+}
+#ai-summary {
+  padding: 0 16px 8px;
+  font-size: 12px; color: var(--text-dim);
+  line-height: 1.4;
+}
+#ai-insights-list {
+  padding: 0 12px 12px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.ai-insight {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid var(--border);
+  transition: border-color 0.3s, background 0.3s;
+}
+.ai-insight:hover {
+  border-color: rgba(167,139,250,0.3);
+  background: rgba(167,139,250,0.05);
+}
+.ai-insight-icon {
+  flex-shrink: 0; width: 20px; height: 20px;
+  border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  font-size: 10px; margin-top: 1px;
+}
+.ai-insight-icon.severity-info     { background: rgba(56,189,248,0.15); color: var(--accent); }
+.ai-insight-icon.severity-warning  { background: rgba(245,158,11,0.15); color: var(--amber); }
+.ai-insight-icon.severity-critical { background: rgba(239,68,68,0.15); color: var(--red); }
+.ai-insight-body { flex: 1; min-width: 0; }
+.ai-insight-title {
+  font-size: 12px; font-weight: 600; color: var(--text);
+  margin-bottom: 2px;
+}
+.ai-insight-detail {
+  font-size: 11px; color: var(--text-dim); line-height: 1.35;
+}
+.ai-insight-meta {
+  font-size: 10px; color: var(--text-dim); opacity: 0.6;
+  margin-top: 3px;
+}
+
+/* ── Map marker tooltip ───────────────────────────────────────────── */
+.leaflet-tooltip.drone-tip {
+  background: var(--bg-card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+}
+.leaflet-tooltip.drone-tip::before { border-right-color: var(--bg-card); }
+
+/* ── Pulsing dot for drone marker ─────────────────────────────────── */
+.drone-marker {
+  position: relative;
+}
+.drone-marker .dot {
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.8);
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+}
+.drone-marker .ring {
+  width: 30px; height: 30px;
+  border-radius: 50%;
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  animation: pulse-ring 2s ease-out infinite;
+  opacity: 0.4;
+}
+@keyframes pulse-ring {
+  0%   { transform: translate(-50%, -50%) scale(0.5); opacity: 0.6; }
+  100% { transform: translate(-50%, -50%) scale(1.8); opacity: 0; }
+}
+
+/* ── Responsive tweaks for smaller kiosk (optional) ───────────────── */
+@media (max-width: 1024px) {
+  :root { --panel-w: 300px; }
+  .brand .subtitle { display: none; }
+}
+@media (max-width: 768px) {
+  main { flex-direction: column; }
+  #panel { width: 100%; min-width: 100%; max-height: 40vh; border-left: none; border-top: 1px solid var(--border); }
+}
