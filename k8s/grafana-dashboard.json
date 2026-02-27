@@ -22,7 +22,7 @@
       "collapsed": false,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
       "id": 100,
-      "title": "🖥️ Cluster Overview",
+      "title": "Cluster Overview",
       "type": "row"
     },
     {
@@ -161,7 +161,7 @@
       "collapsed": false,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 },
       "id": 200,
-      "title": "🎮 NVIDIA GPU — A2 (Ampere)",
+      "title": "NVIDIA GPU — A2 (Ampere)",
       "type": "row"
     },
     {
@@ -278,7 +278,7 @@
       "collapsed": false,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 26 },
       "id": 300,
-      "title": "🚁 Drone Demo Workloads",
+      "title": "Drone Demo Workloads",
       "type": "row"
     },
     {
@@ -398,7 +398,7 @@
       "collapsed": false,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 39 },
       "id": 400,
-      "title": "🌐 Network & Storage",
+      "title": "Network & Storage",
       "type": "row"
     },
     {
@@ -476,7 +476,7 @@
   "time": { "from": "now-1h", "to": "now" },
   "timepicker": {},
   "timezone": "",
-  "title": "AKS Arc — Cluster & GPU Monitoring",
+  "title": "AKS Arc Edge Cluster — MWC 2026",
   "uid": "aks-arc-mwc26",
   "version": 1
 }
