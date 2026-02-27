@@ -1,0 +1,21 @@
+# MetalLB IP Address Pool and L2 Advertisement
+# Assigns 172.21.229.201 as the VIP for LoadBalancer services
+---
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: ingress-pool
+  namespace: metallb-system
+spec:
+  addresses:
+    - 172.21.229.201/32
+
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: ingress-l2
+  namespace: metallb-system
+spec:
+  ipAddressPools:
+    - ingress-pool
