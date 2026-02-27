@@ -4,31 +4,69 @@
 
 A live kiosk demo showing five autonomous drones monitoring 5G network quality across the Barcelona MWC venue area. Telemetry flows through Azure IoT Hub, while a small language model (Phi-3 Mini) running on an NVIDIA GPU at the edge provides real-time AI-powered insights — all orchestrated on AKS Arc (Azure Local).
 
-![Architecture: Drones → IoT Hub → Dashboard ← Foundry Local AI (GPU)](docs/architecture.png)
+```mermaid
+graph TB
+    subgraph Cloud["☁️ Azure Cloud (South Central US)"]
+        IoTHub["Azure IoT Hub<br/><i>pdx-iothub · S1</i><br/>Device Registry + D2C Telemetry"]
+        KV["Azure Key Vault<br/><i>pdx-kv</i><br/>Connection Strings"]
+        ACR["Azure Container Registry<br/><i>acxcontregwus2 · Premium</i><br/>Dashboard & Simulator Images"]
+        Arc["Azure Arc<br/>Connected Cluster"]
+    end
+
+    subgraph AKSArc["🖥️ AKS Arc on Azure Local — 2× Lenovo SE350"]
+        subgraph UserPool["User Node Pool · pdxuser"]
+            subgraph DroneDemoNS["Namespace: drone-demo"]
+                Dashboard["🌐 Dashboard<br/>Flask + Socket.IO + Leaflet.js"]
+                Simulator["📡 Drone Simulator<br/>Python · 5 drones"]
+            end
+        end
+
+        subgraph GPUPool["GPU Node Pool · pdxgpu — NVIDIA A2"]
+            subgraph FoundryNS["Namespace: foundry-local"]
+                FoundryOp["Foundry Local Inference Operator"]
+                Phi3["🧠 Phi-3 Mini 4K Instruct<br/>3.8B param SLM"]
+            end
+        end
+
+        subgraph IngressNS["Namespace: pdx-ingress"]
+            Ingress["NGINX Ingress Controller"]
+        end
+
+        MetalLB["MetalLB v0.14.9 · L2<br/>VIP: 172.21.229.201"]
+    end
+
+    subgraph Users["👤 Demo Visitors"]
+        Browser["Browser / Kiosk<br/>https://mwc.adaptivecloudlab.com"]
+    end
+
+    Simulator -->|"D2C Telemetry · AMQP"| IoTHub
+    IoTHub -->|"Event Hub Consumer"| Dashboard
+    Dashboard -->|"HTTPS /v1/chat/completions"| Phi3
+    Phi3 -->|"AI Insights · JSON"| Dashboard
+    Browser -->|"HTTPS"| MetalLB
+    MetalLB --> Ingress
+    Ingress --> Dashboard
+    ACR -.->|"Image Pull"| DroneDemoNS
+    Arc -.->|"Cluster Mgmt"| AKSArc
+    KV -.->|"Secrets"| Simulator
+    FoundryOp -->|"Manages"| Phi3
+
+    classDef cloud fill:#E3F2FD,stroke:#1565C0,color:#0D47A1
+    classDef edge fill:#E8F5E9,stroke:#2E7D32,color:#1B5E20
+    classDef gpu fill:#FFF3E0,stroke:#E65100,color:#BF360C
+    classDef user fill:#F3E5F5,stroke:#6A1B9A,color:#4A148C
+
+    class IoTHub,KV,ACR,Arc cloud
+    class Dashboard,Simulator,Ingress,MetalLB edge
+    class FoundryOp,Phi3 gpu
+    class Browser user
+```
+
+> *Full detailed diagram with node IPs and all platform services: [docs/architecture.md](docs/architecture.md)*
 
 ---
 
 ## Architecture Overview
-
-```
-┌──────────────┐     D2C telemetry      ┌────────────────┐
-│  Drone Sim   │ ────────────────────►  │  Azure IoT Hub │
-│  (5 drones)  │   (connection strings) │  (S1, SoCal)   │
-└──────────────┘                        └───────┬────────┘
-                                                │ Event Hub
-                                                ▼
-                                      ┌──────────────────┐
-                                      │   Flask Dashboard │◄───── Browser (Leaflet map)
-                                      │   + Socket.IO     │
-                                      └────────┬─────────┘
-                                               │ HTTPS /v1/chat/completions
-                                               ▼
-                                      ┌──────────────────┐
-                                      │  Foundry Local    │
-                                      │  Phi-3 Mini 4K    │  ◄── NVIDIA A2 GPU
-                                      │  (AKS Arc node)   │
-                                      └──────────────────┘
-```
 
 **Key components:**
 
