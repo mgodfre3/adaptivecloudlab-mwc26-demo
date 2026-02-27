@@ -1,0 +1,19 @@
+# DCGM Exporter — GPU metrics for Prometheus
+serviceMonitor:
+  enabled: true
+  additionalLabels:
+    release: kube-prometheus-stack
+
+nodeSelector:
+  msft.microsoft/nodepool-name: pdx-aks-ead6c2bf-pdxgpu
+
+tolerations:
+  - operator: Exists
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi

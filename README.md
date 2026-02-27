@@ -265,6 +265,7 @@ This URL is served by the NGINX Ingress controller on the AKS Arc cluster via Me
 | Component | Value |
 |---|---|
 | Dashboard URL | `https://mwc.adaptivecloudlab.com` |
+| Grafana URL | `https://grafana.adaptivecloudlab.com` |
 | MetalLB VIP | `172.21.229.201` |
 | Ingress Controller | NGINX (namespace: `pdx-ingress`) |
 | TLS | Self-signed cert via cert-manager |
@@ -288,12 +289,17 @@ adaptivecloudlab-mwc26-demo/
 │   ├── 01-create-cluster.ps1           # AKS Arc cluster + node pools
 │   ├── 02-install-platform.ps1         # Ingress, cert-mgr, Foundry, IoT Ops
 │   ├── 03-deploy-iot-simulation.ps1    # IoT Hub, device registration
-│   └── 04-deploy-drone-demo.ps1        # Build containers, deploy to cluster
+│   ├── 04-deploy-drone-demo.ps1        # Build containers, deploy to cluster
+│   └── 05-deploy-monitoring.ps1        # Prometheus, Grafana, DCGM GPU exporter
 ├── k8s/
 │   ├── foundry-local.yaml             # Foundry Local Model + ModelDeployment CRDs
 │   ├── drone-demo.yaml.template       # Dashboard + Simulator K8s template (rendered at deploy time)
 │   ├── drone-demo-secrets.yaml         # Secrets template (gitignored)
-│   └── metallb-config.yaml            # MetalLB IP pool + L2 advertisement
+│   ├── metallb-config.yaml            # MetalLB IP pool + L2 advertisement
+│   ├── monitoring-values.yaml         # Helm values for kube-prometheus-stack
+│   ├── dcgm-values.yaml              # Helm values for NVIDIA DCGM GPU exporter
+│   ├── grafana-dashboard.json         # Custom Grafana dashboard (cluster + GPU)
+│   └── grafana-ingress.yaml           # Ingress for grafana.adaptivecloudlab.com
 ├── dashboard/
 │   ├── app.py                          # Flask backend (telemetry + AI analysis)
 │   ├── requirements.txt                # Python dependencies
@@ -424,6 +430,52 @@ Primary configuration file. All resource names are auto-derived from `PREFIX`. K
 | `EDGE_AI_INTERVAL` | Seconds between AI analysis cycles | `15` |
 | `DRONE_COUNT` | Number of drones in demo mode | `5` |
 | `DASHBOARD_PORT` | HTTP port | `5000` |
+
+---
+
+## Monitoring (Prometheus + Grafana)
+
+The cluster includes a full monitoring stack deployed in the `monitoring` namespace.
+
+### What's deployed
+
+| Component | Chart / Version | Purpose |
+|---|---|---|
+| **Prometheus** | `kube-prometheus-stack` | Metrics collection, alerting rules, node-exporter, kube-state-metrics |
+| **Grafana** | Bundled with kube-prometheus-stack | Dashboard visualization |
+| **DCGM Exporter** | `nvidia/dcgm-exporter` | NVIDIA GPU metrics (utilization, memory, temp, power) |
+
+### Access Grafana
+
+> **https://grafana.adaptivecloudlab.com**
+>
+> Credentials: `admin` / `MWC26-Demo!`
+>
+> Anonymous viewer access is also enabled (no login required for read-only).
+
+A DNS A record for `grafana.adaptivecloudlab.com` must point to `172.21.229.201` (same MetalLB VIP as the demo dashboard).
+
+### Custom Dashboard: "AKS Arc — Cluster & GPU Monitoring"
+
+Pre-provisioned via ConfigMap sidecar. Includes:
+
+- **Cluster Overview** — node count, pod count, CPU/memory usage gauges
+- **Node Resources** — per-node CPU and memory time series
+- **NVIDIA GPU (A2)** — utilization %, memory usage, temperature, power draw, SM/memory copy utilization over time
+- **Drone Demo Workloads** — pod status (dashboard, simulator, Foundry Local), IoT Ops pod count, container restarts, per-pod CPU/memory
+- **Network & Storage** — node network RX/TX, disk usage bar gauge, disk I/O
+
+### Deploy monitoring
+
+```powershell
+.\scripts\05-deploy-monitoring.ps1
+```
+
+To update just the dashboard ConfigMap without re-installing Helm charts:
+
+```powershell
+.\scripts\05-deploy-monitoring.ps1 -DashboardOnly
+```
 
 ---
 
