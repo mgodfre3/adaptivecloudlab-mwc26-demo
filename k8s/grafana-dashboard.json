@@ -12,7 +12,7 @@
       }
     ]
   },
-  "description": "AKS Arc Cluster + GPU + Drone Demo Monitoring — MWC 2026",
+  "description": "AKS Arc Cluster + GPU + Drone Demo Monitoring - MWC 2026",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -161,7 +161,7 @@
       "collapsed": false,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 },
       "id": 200,
-      "title": "NVIDIA GPU — A2 (Ampere)",
+      "title": "NVIDIA GPU - A2 (Ampere)",
       "type": "row"
     },
     {
@@ -476,7 +476,7 @@
   "time": { "from": "now-1h", "to": "now" },
   "timepicker": {},
   "timezone": "",
-  "title": "AKS Arc Edge Cluster — MWC 2026",
+  "title": "AKS Arc Edge Cluster - MWC 2026",
   "uid": "aks-arc-mwc26",
   "version": 1
 }
