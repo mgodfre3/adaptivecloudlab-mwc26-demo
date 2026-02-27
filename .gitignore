@@ -2,9 +2,11 @@
 iot-simulation/.env
 dashboard/.env
 config/aks_arc_cluster.env
+config/deployment.env
 
-# K8s secrets (contains API keys and connection strings)
+# K8s secrets and rendered manifests (generated from templates)
 k8s/drone-demo-secrets.yaml
+k8s/drone-demo.yaml
 
 # Python
 __pycache__/

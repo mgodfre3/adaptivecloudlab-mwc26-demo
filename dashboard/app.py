@@ -22,6 +22,7 @@ import json
 import os
 import random
 import math
+import secrets
 import threading
 import time
 from datetime import datetime, timezone
@@ -53,7 +54,7 @@ EDGE_AI_INTERVAL = int(os.getenv("EDGE_AI_INTERVAL", "15"))  # seconds between a
 
 # ── Flask app ────────────────────────────────────────────────────────────────
 app = Flask(__name__)
-app.config["SECRET_KEY"] = "mwc26-demo-dashboard"
+app.config["SECRET_KEY"] = os.getenv("FLASK_SECRET_KEY", secrets.token_hex(16))
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 # In-memory latest state per drone
