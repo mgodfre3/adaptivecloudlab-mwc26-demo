@@ -4,19 +4,17 @@
 
 .DESCRIPTION
     This script:
-    1. Builds Docker images for the dashboard and simulator
-    2. Pushes them to ACR
-    3. Populates the K8s secrets from local .env files
-    4. Applies the K8s manifests to the cluster
-
-.PARAMETER AcrName
-    ACR login server (e.g. myacr.azurecr.io)
+    1. Loads deployment config from config/deployment.env
+    2. Renders the K8s template (drone-demo.yaml.template → drone-demo.yaml)
+    3. Builds container images via ACR (no local Docker needed)
+    4. Populates K8s secrets from local .env files
+    5. Applies the K8s manifests to the cluster
 
 .PARAMETER Tag
     Image tag (default: latest)
 
 .PARAMETER SkipBuild
-    Skip Docker build/push steps (deploy manifests only)
+    Skip ACR build steps (deploy manifests only)
 
 .EXAMPLE
     .\scripts\04-deploy-drone-demo.ps1
@@ -24,7 +22,6 @@
 #>
 
 param(
-    [string]$AcrName = "acxcontregwus2-c6chcgfjardafsb5.azurecr.io",
     [string]$Tag = "latest",
     [switch]$SkipBuild
 )
@@ -33,39 +30,66 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $env:AZURE_EXTENSION_DIR = "$env:TEMP\az_extensions"
 
+# ── Load deployment config ───────────────────────────────────────────────────
+$deployEnv = "$root\config\deployment.env"
+if (-not (Test-Path $deployEnv)) {
+    Write-Host "ERROR: $deployEnv not found. Copy config/deployment.env.sample and fill in your values." -ForegroundColor Red
+    exit 1
+}
+
+# Parse key=value pairs (skip comments and blank lines)
+$config = @{}
+Get-Content $deployEnv | ForEach-Object {
+    if ($_ -match '^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$') {
+        $config[$Matches[1]] = $Matches[2].Trim()
+    }
+}
+
+$AcrName = $config["ACR_LOGIN_SERVER"]
+if (-not $AcrName) {
+    Write-Host "ERROR: ACR_LOGIN_SERVER not set in deployment.env" -ForegroundColor Red
+    exit 1
+}
+
 Write-Host "`n=== Drone Demo Deployment ===" -ForegroundColor Cyan
 Write-Host "ACR:  $AcrName"
 Write-Host "Tag:  $Tag"
 Write-Host "Root: $root"
+
+# ── Render K8s template ──────────────────────────────────────────────────────
+Write-Host "`n[0/5] Rendering K8s template..." -ForegroundColor Yellow
+$template = Get-Content "$root\k8s\drone-demo.yaml.template" -Raw
+
+# Also extract TLS_DNS_BASE from INGRESS_HOSTNAME (strip first subdomain)
+$ingressHost = $config["INGRESS_HOSTNAME"]
+$tlsDnsBase = if ($ingressHost -match '^[^.]+\.(.+)$') { $Matches[1] } else { $ingressHost }
+$config["TLS_DNS_BASE"] = $tlsDnsBase
+
+foreach ($key in $config.Keys) {
+    $template = $template -replace [regex]::Escape("`${$key}"), $config[$key]
+}
+$template | Set-Content "$root\k8s\drone-demo.yaml" -Encoding utf8
+Write-Host "  Rendered k8s/drone-demo.yaml"
 
 # ── Step 1: ACR Login ────────────────────────────────────────────────────────
 if (-not $SkipBuild) {
     Write-Host "`n[1/5] Logging into ACR..." -ForegroundColor Yellow
     az.cmd acr login --name $AcrName 2>&1
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "ERROR: ACR login failed. Ensure Docker Desktop is running and you have ACR push access." -ForegroundColor Red
-        exit 1
+        Write-Host "WARNING: ACR login failed — falling back to az acr build (no local Docker needed)" -ForegroundColor DarkYellow
     }
 
     # ── Step 2: Build & Push Dashboard ────────────────────────────────────────
-    Write-Host "`n[2/5] Building dashboard image..." -ForegroundColor Yellow
-    $dashImg = "$AcrName/drone-demo/dashboard:$Tag"
-    docker build -t $dashImg "$root\dashboard"
+    Write-Host "`n[2/5] Building dashboard image via ACR..." -ForegroundColor Yellow
+    $dashImg = "drone-demo/dashboard:$Tag"
+    az.cmd acr build --registry ($AcrName -replace '\.azurecr\.io$','') --image $dashImg "$root\dashboard"
     if ($LASTEXITCODE -ne 0) { Write-Host "ERROR: Dashboard build failed" -ForegroundColor Red; exit 1 }
-    
-    Write-Host "Pushing $dashImg..."
-    docker push $dashImg
-    if ($LASTEXITCODE -ne 0) { Write-Host "ERROR: Dashboard push failed" -ForegroundColor Red; exit 1 }
 
     # ── Step 3: Build & Push Simulator ────────────────────────────────────────
-    Write-Host "`n[3/5] Building simulator image..." -ForegroundColor Yellow
-    $simImg = "$AcrName/drone-demo/simulator:$Tag"
-    docker build -t $simImg "$root\iot-simulation"
+    Write-Host "`n[3/5] Building simulator image via ACR..." -ForegroundColor Yellow
+    $simImg = "drone-demo/simulator:$Tag"
+    az.cmd acr build --registry ($AcrName -replace '\.azurecr\.io$','') --image $simImg "$root\iot-simulation"
     if ($LASTEXITCODE -ne 0) { Write-Host "ERROR: Simulator build failed" -ForegroundColor Red; exit 1 }
-    
-    Write-Host "Pushing $simImg..."
-    docker push $simImg
-    if ($LASTEXITCODE -ne 0) { Write-Host "ERROR: Simulator push failed" -ForegroundColor Red; exit 1 }
 } else {
     Write-Host "`n[1-3/5] Skipping build/push (--SkipBuild)" -ForegroundColor DarkGray
 }

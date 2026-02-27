@@ -34,15 +34,16 @@ data:
   DASHBOARD_PORT: "5000"
   DRONE_COUNT: "5"
   EVENTHUB_CONSUMER_GROUP: "drone-telemetry"
+  FLASK_SECRET_KEY: "${FLASK_SECRET_KEY}"
 
   # Edge AI — in-cluster Foundry Local endpoint (no port-forward needed)
   EDGE_AI_ENABLED: "true"
-  EDGE_AI_ENDPOINT: "https://phi-3-deployment.foundry-local.svc:5000"
-  EDGE_AI_MODEL: "Phi-3-mini-4k-instruct-cuda-gpu:1"
+  EDGE_AI_ENDPOINT: "${EDGE_AI_ENDPOINT}"
+  EDGE_AI_MODEL: "${EDGE_AI_MODEL}"
   EDGE_AI_INTERVAL: "15"
 
   # Simulator settings
-  IOT_HUB_NAME: "pdx-iothub"
+  IOT_HUB_NAME: "${IOT_HUB_NAME}"
   SEND_INTERVAL_SECONDS: "5"
 
 ---
@@ -67,7 +68,7 @@ spec:
     spec:
       containers:
         - name: dashboard
-          image: acxcontregwus2-c6chcgfjardafsb5.azurecr.io/drone-demo/dashboard:latest
+          image: ${ACR_LOGIN_SERVER}/drone-demo/dashboard:latest
           ports:
             - containerPort: 5000
               name: http
@@ -98,7 +99,7 @@ spec:
       imagePullSecrets:
         - name: acr-pull-secret
       nodeSelector:
-        msft.microsoft/nodepool-name: pdx-aks-ead6c2bf-pdxuser
+        msft.microsoft/nodepool-name: ${NODE_POOL_LABEL}
 
 ---
 # ── Dashboard Service ────────────────────────────────────────────────────────
@@ -140,7 +141,7 @@ spec:
     spec:
       containers:
         - name: simulator
-          image: acxcontregwus2-c6chcgfjardafsb5.azurecr.io/drone-demo/simulator:latest
+          image: ${ACR_LOGIN_SERVER}/drone-demo/simulator:latest
           envFrom:
             - configMapRef:
                 name: drone-demo-config
@@ -156,7 +157,7 @@ spec:
       imagePullSecrets:
         - name: acr-pull-secret
       nodeSelector:
-        msft.microsoft/nodepool-name: pdx-aks-ead6c2bf-pdxuser
+        msft.microsoft/nodepool-name: ${NODE_POOL_LABEL}
 
 ---
 # ── Self-Signed ClusterIssuer (for TLS) ──────────────────────────────────────
@@ -180,8 +181,8 @@ spec:
     name: drone-demo-selfsigned
     kind: ClusterIssuer
   dnsNames:
-    - adaptivecloudlab.com
-    - "*.adaptivecloudlab.com"
+    - ${TLS_DNS_BASE}
+    - "*.${TLS_DNS_BASE}"
   duration: 8760h   # 1 year
   renewBefore: 720h  # 30 days
 
@@ -206,10 +207,10 @@ spec:
   ingressClassName: nginx
   tls:
     - hosts:
-        - mwc.adaptivecloudlab.com
+        - ${INGRESS_HOSTNAME}
       secretName: drone-demo-tls
   rules:
-    - host: mwc.adaptivecloudlab.com
+    - host: ${INGRESS_HOSTNAME}
       http:
         paths:
           - path: /
