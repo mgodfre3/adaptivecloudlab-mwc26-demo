@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Drone Network Monitor — MWC 2026</title>
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- Socket.IO -->
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <!-- ─── Top bar ──────────────────────────────────────────────────────── -->
+  <header id="topbar">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M12 2 L22 8.5 L22 15.5 L12 22 L2 15.5 L2 8.5 Z"/>
+        <path d="M12 2 L12 22"/>
+        <path d="M2 8.5 L22 8.5"/>
+        <path d="M2 15.5 L22 15.5"/>
+      </svg>
+      <h1>Drone Network Monitor</h1>
+      <span class="subtitle">Real-Time 5G Telemetry &middot; Edge AI &middot; Azure IoT &middot; MWC 2026</span>
+    </div>
+    <div class="status-bar">
+      <span id="conn-badge" class="badge badge-off">DISCONNECTED</span>
+      <span id="ai-badge" class="badge badge-info">AI: —</span>
+      <span id="mode-badge" class="badge badge-info">—</span>
+      <time id="clock"></time>
+    </div>
+  </header>
+
+  <!-- ─── Main layout ──────────────────────────────────────────────────── -->
+  <main>
+    <!-- Map -->
+    <section id="map-wrapper">
+      <div id="map"></div>
+      <!-- Aggregate overlay -->
+      <div id="aggregate-bar">
+        <div class="agg-item">
+          <span class="agg-label">Avg RSRP</span>
+          <span class="agg-value" id="agg-rsrp">—</span>
+        </div>
+        <div class="agg-item">
+          <span class="agg-label">Avg DL</span>
+          <span class="agg-value" id="agg-dl">—</span>
+        </div>
+        <div class="agg-item">
+          <span class="agg-label">Avg Latency</span>
+          <span class="agg-value" id="agg-lat">—</span>
+        </div>
+        <div class="agg-item">
+          <span class="agg-label">Active Drones</span>
+          <span class="agg-value" id="agg-active">0</span>
+        </div>
+        <div class="agg-item">
+          <span class="agg-label">Msgs / sec</span>
+          <span class="agg-value" id="agg-mps">0</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Right panel – per-drone cards + AI insights -->
+    <aside id="panel">
+      <!-- AI Insights Section -->
+      <div id="ai-section">
+        <div id="ai-header">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M12 2a4 4 0 0 1 4 4v2a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4z"/>
+            <path d="M8 14s-4 2-4 6h16c0-4-4-6-4-6"/>
+            <circle cx="12" cy="6" r="1.5"/>
+          </svg>
+          <span>Edge AI Analysis</span>
+          <span id="ai-model" class="ai-model-tag">—</span>
+        </div>
+        <div id="ai-summary"></div>
+        <div id="ai-insights-list"></div>
+      </div>
+
+      <h2>Fleet Status</h2>
+      <div id="drone-cards"></div>
+    </aside>
+  </main>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
