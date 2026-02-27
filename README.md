@@ -23,6 +23,37 @@ graph LR
 
 ---
 
+## Demo in Action
+
+### Drone Network Monitor Dashboard
+
+Real-time kiosk UI showing 5 autonomous drones over Barcelona with live 5G telemetry and Edge AI insights powered by Phi-3 Mini running on an NVIDIA A2 GPU.
+
+![Drone Network Monitor Dashboard](docs/images/drone-dashboard.png)
+
+**What you're seeing:**
+- **Left panel** — Dark-themed Leaflet map with live drone positions, flight trails, and color-coded signal indicators (green = strong, yellow = moderate, red = weak)
+- **Right panel** — Per-drone telemetry cards showing RSRP, SINR, DL/UL throughput, latency, packet loss, altitude, speed, and battery level
+- **Top-right** — Real-time connection status (`CONNECTED`), AI health indicator (`AI HEALTHY`), and live clock
+- **Edge AI Analysis** — Phi-3 Mini analyzes fleet-wide telemetry every 15 seconds and surfaces actionable insights (signal degradation, coverage gaps, drone health)
+- **Bottom bar** — Fleet-wide aggregates: average RSRP, average DL throughput, average latency, active drone count, and messages/sec throughput
+
+### Grafana Cluster & GPU Monitoring
+
+Full observability stack with Prometheus, Grafana, and NVIDIA DCGM Exporter providing real-time cluster and GPU metrics.
+
+![Grafana Cluster & GPU Dashboard](docs/images/grafana-dashboard.png)
+
+**What you're seeing:**
+- **Cluster Overview** — 6 nodes healthy, 203 pods running, 19% CPU / 23% memory utilization across the cluster
+- **Node CPU & Memory** — Per-node time series showing resource consumption across all 6 Kubernetes nodes
+- **NVIDIA GPU - A2 (Ampere)** — Real-time GPU utilization, VRAM usage (49%), temperature (59°C), and power draw (26.4W) for the NVIDIA A2 GPU running Phi-3 inference
+- **GPU Time Series** — Utilization and memory trends over time, showing inference bursts from the AI analysis cycles
+
+> **Screenshots:** Place your screenshots as `docs/images/drone-dashboard.png` and `docs/images/grafana-dashboard.png`
+
+---
+
 ## Architecture Overview
 
 **Key components:**
@@ -226,7 +257,8 @@ kubectl create secret docker-registry acr-pull-secret -n drone-demo \
 
 # Apply manifests (namespace, deployments, service, ingress, MetalLB, TLS)
 kubectl apply -f k8s/metallb-config.yaml
-kubectl apply -f k8s/drone-demo.yaml
+# drone-demo.yaml is auto-rendered from the template by the deploy script
+.\scripts\04-deploy-drone-demo.ps1 -SkipBuild
 ```
 
 ### Step 3: Verify deployment
@@ -264,6 +296,7 @@ This URL is served by the NGINX Ingress controller on the AKS Arc cluster via Me
 | Component | Value |
 |---|---|
 | Dashboard URL | `https://mwc.adaptivecloudlab.com` |
+| Grafana URL | `https://grafana.adaptivecloudlab.com` |
 | MetalLB VIP | `172.21.229.201` |
 | Ingress Controller | NGINX (namespace: `pdx-ingress`) |
 | TLS | Self-signed cert via cert-manager |
@@ -279,19 +312,30 @@ This URL is served by the NGINX Ingress controller on the AKS Arc cluster via Me
 ```
 adaptivecloudlab-mwc26-demo/
 ├── README.md                           # This file
+├── docs/
+│   ├── architecture.md                 # Detailed Mermaid architecture diagram
+│   └── images/
+│       ├── drone-dashboard.png         # Drone Network Monitor screenshot
+│       └── grafana-dashboard.png       # Grafana cluster & GPU dashboard screenshot
 ├── config/
-│   └── aks_arc_cluster.env.sample      # Environment config template
+│   ├── aks_arc_cluster.env.sample      # Infrastructure config template
+│   └── deployment.env.sample           # Deployment config template (ACR, DNS, etc.)
 ├── scripts/
 │   ├── 00-bootstrap-secrets.ps1        # RG, Key Vault, SSH keys, passwords
 │   ├── 01-create-cluster.ps1           # AKS Arc cluster + node pools
 │   ├── 02-install-platform.ps1         # Ingress, cert-mgr, Foundry, IoT Ops
 │   ├── 03-deploy-iot-simulation.ps1    # IoT Hub, device registration
-│   └── 04-deploy-drone-demo.ps1        # Build containers, deploy to cluster
+│   ├── 04-deploy-drone-demo.ps1        # Build containers, deploy to cluster
+│   └── 05-deploy-monitoring.ps1        # Prometheus, Grafana, DCGM GPU exporter
 ├── k8s/
 │   ├── foundry-local.yaml             # Foundry Local Model + ModelDeployment CRDs
-│   ├── drone-demo.yaml                # Dashboard + Simulator K8s manifests
+│   ├── drone-demo.yaml.template       # Dashboard + Simulator K8s template (rendered at deploy time)
 │   ├── drone-demo-secrets.yaml         # Secrets template (gitignored)
-│   └── metallb-config.yaml            # MetalLB IP pool + L2 advertisement
+│   ├── metallb-config.yaml            # MetalLB IP pool + L2 advertisement
+│   ├── monitoring-values.yaml         # Helm values for kube-prometheus-stack
+│   ├── dcgm-values.yaml              # Helm values for NVIDIA DCGM GPU exporter
+│   ├── grafana-dashboard.json         # Custom Grafana dashboard (cluster + GPU)
+│   └── grafana-ingress.yaml           # Ingress for grafana.adaptivecloudlab.com
 ├── dashboard/
 │   ├── app.py                          # Flask backend (telemetry + AI analysis)
 │   ├── requirements.txt                # Python dependencies
@@ -314,12 +358,16 @@ adaptivecloudlab-mwc26-demo/
 
 ## Dashboard Features
 
-- **Dark-theme kiosk mode** — designed for large screens / event booths
-- **Real-time Leaflet map** — drone positions on a dark tile layer centered on Barcelona (Fira Gran Via)
-- **Telemetry cards** — per-drone 5G metrics: RSRP (dBm), RSRQ (dB), SINR (dB), throughput (Mbps), battery %, altitude
-- **AI Insights panel** — Phi-3 analyzes fleet telemetry every 15 seconds and returns JSON insights (status, recommendation, affected drones)
-- **Aggregate statistics** — fleet-wide averages and status summary
-- **Demo mode** — runs entirely with synthetic data when `DEMO_MODE=true` (no IoT Hub connection needed)
+| Feature | Description |
+|---|---|
+| **Dark-theme kiosk mode** | Designed for large screens and event booths — auto-refreshing, no user interaction required |
+| **Real-time Leaflet map** | Drone positions on a dark tile layer centered on Barcelona (Fira Gran Via) with colored flight trails and signal-strength indicators |
+| **5G telemetry cards** | Per-drone metrics: RSRP (dBm), SINR (dB), DL/UL throughput (Mbps), latency (ms), packet loss (%), altitude (m), speed (m/s), battery level |
+| **Edge AI Insights** | Phi-3 Mini analyzes fleet telemetry every 15 seconds — surfaces signal degradation, coverage gaps, and recommended actions via JSON insights |
+| **Fleet status badges** | Color-coded per-drone status: `PATROLLING` (green), `RETURNING` (yellow), `EMERGENCY` (red) |
+| **Aggregate statistics** | Bottom bar with fleet-wide averages: RSRP, DL throughput, latency, active drone count, and messages/sec |
+| **Health indicators** | Top-right badges: WebSocket connection status, AI model health, live clock |
+| **Demo mode** | Runs entirely with synthetic data when `DEMO_MODE=true` — no IoT Hub connection needed |
 
 ---
 
@@ -422,6 +470,70 @@ Primary configuration file. All resource names are auto-derived from `PREFIX`. K
 | `EDGE_AI_INTERVAL` | Seconds between AI analysis cycles | `15` |
 | `DRONE_COUNT` | Number of drones in demo mode | `5` |
 | `DASHBOARD_PORT` | HTTP port | `5000` |
+
+---
+
+## Monitoring (Prometheus + Grafana)
+
+The cluster includes a full observability stack deployed in the `monitoring` namespace, providing real-time visibility into cluster health, GPU utilization, and workload status.
+
+### What's deployed
+
+| Component | Chart / Version | Purpose |
+|---|---|---|
+| **Prometheus** | `kube-prometheus-stack` | Metrics collection, alerting rules, node-exporter, kube-state-metrics |
+| **Grafana** | Bundled with kube-prometheus-stack | Dashboard visualization (5Gi persistent storage) |
+| **DCGM Exporter** | `nvidia/dcgm-exporter` | NVIDIA GPU metrics (utilization, memory, temp, power) — runs on GPU node only |
+
+### Access Grafana
+
+> **https://grafana.adaptivecloudlab.com**
+>
+> Credentials: `admin` / `MWC26-Demo!`
+>
+> Anonymous viewer access is also enabled (no login required for read-only).
+
+A DNS A record for `grafana.adaptivecloudlab.com` must point to `172.21.229.201` (same MetalLB VIP as the demo dashboard).
+
+### Custom Dashboard: "AKS Arc Edge Cluster - MWC 2026"
+
+Pre-provisioned via ConfigMap sidecar (`grafana-sc-dashboard` label). The dashboard auto-loads on Grafana startup with no manual import required.
+
+**4 dashboard sections with 20+ panels:**
+
+| Section | Panels | Key Metrics |
+|---|---|---|
+| **Cluster Overview** | 8 | Total nodes, not-ready nodes, total pods, cluster CPU/memory %, GPU node count, per-node CPU & memory time series |
+| **NVIDIA GPU - A2 (Ampere)** | 6 | GPU utilization gauge, VRAM usage gauge, temperature (°C), power draw (W), utilization over time, memory over time |
+| **Drone Demo Workloads** | 7 | Dashboard/simulator/Foundry Local pod status, IoT Ops pod count, container restarts, per-pod CPU & memory |
+| **Network & Storage** | 4 | Node network RX/TX (bytes/sec), disk usage bar gauge, disk I/O time series |
+
+### Deploy monitoring
+
+```powershell
+.\scripts\05-deploy-monitoring.ps1
+```
+
+To update just the dashboard ConfigMap without re-installing Helm charts:
+
+```powershell
+.\scripts\05-deploy-monitoring.ps1 -DashboardOnly
+```
+
+### Monitoring architecture
+
+```
+Prometheus ──scrape──> node-exporter (all 6 nodes)
+           ──scrape──> kube-state-metrics
+           ──scrape──> dcgm-exporter (GPU node only)
+           ──scrape──> kubelet /metrics
+                |
+                v
+           Grafana ──> Custom Dashboard (ConfigMap sidecar)
+                |
+                v
+           NGINX Ingress ──> grafana.adaptivecloudlab.com
+```
 
 ---
 

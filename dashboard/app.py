@@ -616,7 +616,7 @@ def _start_ai_analyzer():
     print(f"[EdgeAI] Analysis interval: {EDGE_AI_INTERVAL}s, enabled: {EDGE_AI_ENABLED}")
     print(f"[EdgeAI] Platform: Foundry Local on AKS Arc (Azure Local)")
     if EDGE_AI_API_KEY:
-        print(f"[EdgeAI] API key: {EDGE_AI_API_KEY[:12]}...")
+        print(f"[EdgeAI] API key: ****{EDGE_AI_API_KEY[-4:]}")
 
     # Wait for some telemetry data to accumulate
     while not _shutdown.is_set() and not drone_state:

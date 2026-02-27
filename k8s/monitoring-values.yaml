@@ -1,0 +1,142 @@
+# =============================================================================
+#  kube-prometheus-stack Helm Values — AKS Arc Monitoring
+#  Tailored for 2x Lenovo SE350 (6 nodes, 1 GPU)
+# =============================================================================
+
+# ── Grafana ──────────────────────────────────────────────────────────────────
+grafana:
+  enabled: true
+  adminUser: admin
+  adminPassword: MWC26-Demo!
+  
+  persistence:
+    enabled: true
+    size: 5Gi
+  
+  service:
+    type: ClusterIP
+    port: 80
+
+  # Sidecar auto-discovers ConfigMap dashboards
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      folderAnnotation: grafana_folder
+      provider:
+        foldersFromFilesStructure: true
+    datasources:
+      enabled: true
+
+  # Additional data sources (DCGM GPU metrics)
+  additionalDataSources: []
+
+  grafana.ini:
+    server:
+      root_url: https://grafana.adaptivecloudlab.com
+      serve_from_sub_path: false
+    auth.anonymous:
+      enabled: true
+      org_role: Viewer
+    security:
+      allow_embedding: true
+
+  # Resource limits for SE350
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# ── Prometheus ───────────────────────────────────────────────────────────────
+prometheus:
+  prometheusSpec:
+    retention: 7d
+    
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 2Gi
+    
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 20Gi
+
+    # Scrape GPU metrics from DCGM exporter
+    additionalScrapeConfigs:
+      - job_name: 'dcgm-exporter'
+        scrape_interval: 15s
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names:
+                - monitoring
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            regex: dcgm-exporter
+            action: keep
+          - source_labels: [__meta_kubernetes_endpoint_port_name]
+            regex: metrics
+            action: keep
+
+# ── Alertmanager ─────────────────────────────────────────────────────────────
+alertmanager:
+  enabled: false   # Not needed for demo kiosk
+
+# ── Node Exporter ────────────────────────────────────────────────────────────
+nodeExporter:
+  enabled: true
+
+# ── kube-state-metrics ───────────────────────────────────────────────────────
+kubeStateMetrics:
+  enabled: true
+
+# ── Default rules (keep common ones) ────────────────────────────────────────
+defaultRules:
+  create: true
+  rules:
+    alertmanager: false
+    etcd: false
+    configReloaders: false
+    general: true
+    k8sContainerCpuUsageSecondsTotal: true
+    k8sContainerMemoryCache: true
+    k8sContainerMemoryRss: true
+    k8sContainerMemorySwap: false
+    k8sContainerResource: true
+    k8sPodOwner: true
+    kubeApiserverAvailability: false
+    kubeApiserverBurnrate: false
+    kubeApiserverHistogram: false
+    kubeApiserverSlos: false
+    kubeControllerManager: false
+    kubeProxy: false
+    kubeSchedulerAlerting: false
+    kubeSchedulerRecording: false
+    kubeStateMetrics: true
+    kubelet: true
+    node: true
+    nodeExporterAlerting: false
+    nodeExporterRecording: true
+    prometheus: true
+    prometheusOperator: false
+
+# ── Disable components not available on AKS Arc ─────────────────────────────
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
+kubeEtcd:
+  enabled: false
