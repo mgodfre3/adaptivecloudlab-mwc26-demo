@@ -226,7 +226,8 @@ kubectl create secret docker-registry acr-pull-secret -n drone-demo \
 
 # Apply manifests (namespace, deployments, service, ingress, MetalLB, TLS)
 kubectl apply -f k8s/metallb-config.yaml
-kubectl apply -f k8s/drone-demo.yaml
+# drone-demo.yaml is auto-rendered from the template by the deploy script
+.\scripts\04-deploy-drone-demo.ps1 -SkipBuild
 ```
 
 ### Step 3: Verify deployment
@@ -280,7 +281,8 @@ This URL is served by the NGINX Ingress controller on the AKS Arc cluster via Me
 adaptivecloudlab-mwc26-demo/
 ├── README.md                           # This file
 ├── config/
-│   └── aks_arc_cluster.env.sample      # Environment config template
+│   ├── aks_arc_cluster.env.sample      # Infrastructure config template
+│   └── deployment.env.sample           # Deployment config template (ACR, DNS, etc.)
 ├── scripts/
 │   ├── 00-bootstrap-secrets.ps1        # RG, Key Vault, SSH keys, passwords
 │   ├── 01-create-cluster.ps1           # AKS Arc cluster + node pools
@@ -289,7 +291,7 @@ adaptivecloudlab-mwc26-demo/
 │   └── 04-deploy-drone-demo.ps1        # Build containers, deploy to cluster
 ├── k8s/
 │   ├── foundry-local.yaml             # Foundry Local Model + ModelDeployment CRDs
-│   ├── drone-demo.yaml                # Dashboard + Simulator K8s manifests
+│   ├── drone-demo.yaml.template       # Dashboard + Simulator K8s template (rendered at deploy time)
 │   ├── drone-demo-secrets.yaml         # Secrets template (gitignored)
 │   └── metallb-config.yaml            # MetalLB IP pool + L2 advertisement
 ├── dashboard/
