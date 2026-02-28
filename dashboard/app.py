@@ -112,33 +112,219 @@ def _start_eventhub_consumer():
 # ── Demo-mode synthetic data generator ───────────────────────────────────────
 
 # Barcelona, Spain — Fira Gran Via / MWC venue area
-BCN_LAT, BCN_LON, RADIUS = 41.3574, 2.1286, 0.04
+BCN_LAT, BCN_LON = 41.3574, 2.1286
+
+# Base / home pad — MWC venue itself
+BASE_LAT, BASE_LON = 41.3545, 2.1279
+
+# Battery thresholds
+BATTERY_RETURN = 18        # % — start flying home
+BATTERY_CRITICAL = 5       # % — forced landing
+BATTERY_LAUNCH = 92        # % — charged enough to launch
+CHARGE_RATE = 0.35         # % per tick while charging
+DRAIN_RATE_MIN = 0.025     # % per tick while flying
+DRAIN_RATE_MAX = 0.065     # % per tick while flying
+LAUNCH_CLIMB_TICKS = 8     # ticks to reach patrol altitude after launch
+LANDING_TICKS = 6          # ticks to descend at base
+
+# Patrol waypoints — landmarks around Barcelona spread over ~8 km
+PATROL_WAYPOINTS = [
+    (41.3700, 2.1100),  # Montjuic hilltop
+    (41.3650, 2.1500),  # Eixample / Sagrada Familia area
+    (41.3870, 2.1200),  # Placa Catalunya
+    (41.3520, 2.1680),  # Port Olimpic
+    (41.3780, 2.1450),  # Gracia
+    (41.3460, 2.1350),  # Zona Franca industrial
+    (41.3620, 2.1050),  # Sants station
+    (41.3900, 2.1650),  # Diagonal Mar
+    (41.3740, 2.0980),  # Pedralbes
+    (41.3580, 2.1800),  # Poblenou
+    (41.3830, 2.1100),  # Les Corts / Camp Nou
+    (41.3480, 2.1500),  # Parallel / Poble Sec
+]
+
+# NATO phonetic alphabet for drone callsigns — cycles through these
+CALLSIGNS = [
+    "Alpha", "Bravo", "Charlie", "Delta", "Echo",
+    "Foxtrot", "Golf", "Hotel", "India", "Juliet",
+    "Kilo", "Lima", "Mike", "November", "Oscar",
+    "Papa", "Quebec", "Romeo", "Sierra", "Tango",
+    "Uniform", "Victor", "Whiskey", "Xray", "Yankee", "Zulu",
+]
+_callsign_idx = 0  # global counter for next callsign
+
+
+def _next_callsign() -> str:
+    """Return the next callsign from the NATO alphabet, cycling forever."""
+    global _callsign_idx
+    name = CALLSIGNS[_callsign_idx % len(CALLSIGNS)]
+    _callsign_idx += 1
+    return name
 
 
 class _DemoDrone:
-    def __init__(self, idx: int):
-        self.drone_id = f"drone-{idx}"
-        angle = 2 * math.pi * (idx - 1) / max(DRONE_COUNT, 1)
-        self.lat = BCN_LAT + RADIUS * 0.6 * math.cos(angle)
-        self.lon = BCN_LON + RADIUS * 0.6 * math.sin(angle)
-        self.alt = random.uniform(50, 150)
+    """Simulates a single drone with realistic patrol routes,
+    battery-driven return-to-base, and lifecycle management."""
+
+    def __init__(self, callsign: str, slot: int):
+        self.drone_id = f"drone-{callsign.lower()}"
+        self.callsign = callsign
+        self.slot = slot  # fleet position (0..N-1) for replacement tracking
+
+        # Start at base with slight offset so drones don't stack
+        angle = 2 * math.pi * slot / max(DRONE_COUNT, 1)
+        self.lat = BASE_LAT + 0.0004 * math.cos(angle)
+        self.lon = BASE_LON + 0.0004 * math.sin(angle)
+        self.alt = 0.0
         self.heading = random.uniform(0, 360)
-        self.speed = random.uniform(5, 15)
-        self.battery = random.uniform(60, 100)
-        self.status = "patrolling"
+        self.speed = 0.0
+        self.battery = random.uniform(88, 100)
+
+        # Lifecycle
+        self.status = "launching"
+        self._lifecycle_tick = 0  # ticks in current phase
+
+        # Patrol route: pick 4-6 random waypoints for this drone
+        self.waypoints = random.sample(
+            PATROL_WAYPOINTS, random.randint(4, min(6, len(PATROL_WAYPOINTS)))
+        )
+        self.wp_idx = 0
+        self.retired = False
+
+    # ── Movement helpers ─────────────────────────────────────────────────
+
+    def _distance_deg(self, lat2: float, lon2: float) -> float:
+        """Euclidean distance in degrees (good enough for ~10 km scale)."""
+        return math.sqrt((lat2 - self.lat) ** 2 + (lon2 - self.lon) ** 2)
+
+    def _move_toward(self, target_lat: float, target_lon: float) -> bool:
+        """Fly toward *target* at current speed. Returns True when arrived."""
+        dlat = target_lat - self.lat
+        dlon = target_lon - self.lon
+        dist = math.sqrt(dlat ** 2 + dlon ** 2)
+
+        if dist < 0.0004:  # ~40 m — close enough
+            return True
+
+        # degrees per tick  (speed_mps * 3 s / ~111 000 m/deg)
+        step = min(self.speed * 3.0 / 111_000, dist)
+        self.lat += dlat / dist * step
+        self.lon += dlon / dist * step
+
+        # Update heading to face target
+        self.heading = math.degrees(math.atan2(dlon, dlat)) % 360
+
+        # Slight realism wobble
+        self.lat += random.gauss(0, 0.00003)
+        self.lon += random.gauss(0, 0.00003)
+        return False
+
+    # ── Lifecycle step ───────────────────────────────────────────────────
 
     def step(self) -> dict:
-        self.lat += random.gauss(0, 0.0005)
-        self.lon += random.gauss(0, 0.0005)
-        self.alt = max(20, self.alt + random.gauss(0, 2))
-        self.heading = (self.heading + random.gauss(0, 10)) % 360
-        self.speed = max(0, self.speed + random.gauss(0, 1))
-        self.battery = max(0, self.battery - random.uniform(0.02, 0.1))
-        if self.battery < 15:
-            self.status = "returning"
-        else:
-            self.status = random.choices(["patrolling", "hovering"], weights=[0.85, 0.15])[0]
+        """Advance simulation by one tick (~3 s) and return telemetry dict."""
+        self._lifecycle_tick += 1
 
+        if self.status == "launching":
+            self._step_launching()
+        elif self.status in ("patrolling", "hovering"):
+            self._step_patrolling()
+        elif self.status == "returning":
+            self._step_returning()
+        elif self.status == "landing":
+            self._step_landing()
+        elif self.status == "charging":
+            self._step_charging()
+
+        return self._build_payload()
+
+    def _step_launching(self):
+        """Climb from base to patrol altitude."""
+        self.speed = random.uniform(3, 6)
+        self.alt = min(120, self.alt + random.uniform(10, 20))
+        self.battery -= random.uniform(DRAIN_RATE_MIN, DRAIN_RATE_MAX)
+        # Drift away from base slightly
+        wp = self.waypoints[0]
+        self._move_toward(wp[0], wp[1])
+        if self._lifecycle_tick >= LAUNCH_CLIMB_TICKS:
+            self.status = "patrolling"
+            self.speed = random.uniform(8, 14)
+            self._lifecycle_tick = 0
+            print(f"  [Demo] {self.drone_id} launched — heading to waypoint 1")
+
+    def _step_patrolling(self):
+        """Fly between waypoints; drain battery."""
+        wp = self.waypoints[self.wp_idx]
+        arrived = self._move_toward(wp[0], wp[1])
+
+        self.speed = max(4, min(18, self.speed + random.gauss(0, 0.8)))
+        self.alt = max(40, min(180, self.alt + random.gauss(0, 1.5)))
+        self.battery -= random.uniform(DRAIN_RATE_MIN, DRAIN_RATE_MAX)
+
+        if arrived:
+            # Move to next waypoint; occasionally hover for a few ticks
+            self.wp_idx = (self.wp_idx + 1) % len(self.waypoints)
+            if random.random() < 0.25:
+                self.status = "hovering"
+                self.speed = random.uniform(0, 2)
+                self._lifecycle_tick = 0
+            else:
+                print(f"  [Demo] {self.drone_id} reached waypoint — next #{self.wp_idx + 1}")
+
+        # Check battery
+        if self.battery <= BATTERY_RETURN:
+            self.status = "returning"
+            self._lifecycle_tick = 0
+            self.speed = random.uniform(12, 16)  # hurry home
+            print(f"  [Demo] {self.drone_id} LOW BATTERY ({self.battery:.0f}%) — returning to base")
+
+        # Hovering timeout — resume patrol after a short pause
+        if self.status == "hovering" and self._lifecycle_tick >= random.randint(3, 8):
+            self.status = "patrolling"
+            self.speed = random.uniform(8, 14)
+            self._lifecycle_tick = 0
+
+    def _step_returning(self):
+        """Fly back to base."""
+        arrived = self._move_toward(BASE_LAT, BASE_LON)
+        self.speed = max(6, min(18, self.speed + random.gauss(0, 0.5)))
+        self.alt = max(30, min(180, self.alt + random.gauss(0, 1)))
+        self.battery = max(0, self.battery - random.uniform(DRAIN_RATE_MIN, DRAIN_RATE_MAX))
+
+        if arrived or self.battery <= BATTERY_CRITICAL:
+            self.status = "landing"
+            self._lifecycle_tick = 0
+            print(f"  [Demo] {self.drone_id} reached base — landing")
+
+    def _step_landing(self):
+        """Descend to ground at base."""
+        self.speed = max(0, self.speed - random.uniform(0.5, 1.5))
+        self.alt = max(0, self.alt - random.uniform(12, 25))
+        self.battery = max(0, self.battery - random.uniform(0.01, 0.02))
+        self._move_toward(BASE_LAT, BASE_LON)
+
+        if self._lifecycle_tick >= LANDING_TICKS or self.alt <= 0:
+            self.alt = 0
+            self.speed = 0
+            self.status = "charging"
+            self._lifecycle_tick = 0
+            print(f"  [Demo] {self.drone_id} landed — charging")
+
+    def _step_charging(self):
+        """Sit at base and recharge. Mark retired when full."""
+        self.speed = 0
+        self.alt = 0
+        self.lat = BASE_LAT + random.gauss(0, 0.00005)
+        self.lon = BASE_LON + random.gauss(0, 0.00005)
+        self.battery = min(100, self.battery + CHARGE_RATE)
+
+        if self.battery >= BATTERY_LAUNCH:
+            self.retired = True
+            print(f"  [Demo] {self.drone_id} fully charged — retiring for replacement")
+
+    # ── Telemetry payload ────────────────────────────────────────────────
+
+    def _build_payload(self) -> dict:
         rsrp = random.randint(-120, -60)
         return {
             "drone_id": self.drone_id,
@@ -162,7 +348,7 @@ class _DemoDrone:
                 "packet_loss_pct": round(random.uniform(0, 2), 3),
                 "connected": random.choices([True, False], weights=[0.95, 0.05])[0],
             },
-            "battery_pct": round(self.battery, 1),
+            "battery_pct": round(max(0, self.battery), 1),
             "status": self.status,
             "environment": {
                 "temperature_c": round(random.uniform(5, 35), 1),
@@ -173,14 +359,43 @@ class _DemoDrone:
 
 
 def _start_demo_generator():
-    """Generate synthetic telemetry for demo/kiosk mode."""
-    print(f"[Demo] Running in DEMO MODE — generating synthetic data for {DRONE_COUNT} drones")
-    drones = [_DemoDrone(i) for i in range(1, DRONE_COUNT + 1)]
+    """Fleet manager: generate synthetic telemetry, cycle drones on battery depletion."""
+    global _callsign_idx
+    _callsign_idx = 0  # reset on start
+
+    print(f"[Demo] Running in DEMO MODE — managing fleet of {DRONE_COUNT} drones")
+    print(f"[Demo] Drones patrol Barcelona, return to base at {BATTERY_RETURN}% battery,")
+    print(f"[Demo] charge to {BATTERY_LAUNCH}%, then a replacement drone launches.")
+
+    # Seed initial fleet with staggered batteries for visual variety
+    fleet: list[_DemoDrone] = []
+    for slot in range(DRONE_COUNT):
+        cs = _next_callsign()
+        d = _DemoDrone(cs, slot)
+        # Stagger initial battery so drones don't all return at once
+        d.battery = random.uniform(40, 100)
+        fleet.append(d)
+        print(f"  [Demo] Slot {slot}: {d.drone_id} (battery {d.battery:.0f}%)")
+
     while not _shutdown.is_set():
-        for d in drones:
+        for i, d in enumerate(fleet):
             payload = d.step()
             drone_state[d.drone_id] = payload
             socketio.emit("telemetry", payload)
+
+            # Replace retired drones
+            if d.retired:
+                old_id = d.drone_id
+                # Remove old drone from state
+                drone_state.pop(old_id, None)
+                socketio.emit("drone_retired", {"drone_id": old_id})
+
+                # Launch replacement
+                cs = _next_callsign()
+                new_drone = _DemoDrone(cs, d.slot)
+                fleet[i] = new_drone
+                print(f"  [Demo] Slot {d.slot}: {old_id} retired -> {new_drone.drone_id} launching")
+
         _shutdown.wait(3)
 
 

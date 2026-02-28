@@ -99,6 +99,24 @@
     handleTelemetry(data);
   });
 
+  // ── Drone retirement (lifecycle cycling) ──────────────────────────────
+  socket.on("drone_retired", (data) => {
+    const id = data.drone_id;
+    if (drones[id]) {
+      // Remove marker and trail from map
+      map.removeLayer(drones[id].marker);
+      map.removeLayer(drones[id].trailLine);
+      delete drones[id];
+    }
+    // Remove card
+    const card = document.getElementById("card-" + id);
+    if (card) {
+      card.classList.add("card-fade-out");
+      setTimeout(() => card.remove(), 600);
+    }
+    updateAggregates();
+  });
+
   // ── Main handler ──────────────────────────────────────────────────────
   function handleTelemetry(d) {
     const id = d.drone_id;
@@ -233,7 +251,8 @@
       sumRsrp += net.signal_rsrp_dbm || 0;
       sumDl   += net.downlink_mbps || 0;
       sumLat  += net.latency_ms || 0;
-      if (d.status !== "landed") active++;
+      const st = (d.status || "").toLowerCase();
+      if (st !== "landed" && st !== "charging" && st !== "landing") active++;
     });
     const n = ids.length;
     aggRsrp.textContent   = (sumRsrp / n).toFixed(0) + " dBm";
