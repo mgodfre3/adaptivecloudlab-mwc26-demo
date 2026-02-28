@@ -590,20 +590,26 @@ def _start_ai_analyzer():
             result["last_updated"] = datetime.now(timezone.utc).isoformat()
 
             if EDGE_AI_ENABLED:
-                # Overlay the AI model's natural-language summary
+                # Emit rule-engine insights immediately (don't wait for model)
+                result["status"] = "analyzing"
+                result["model"] = EDGE_AI_MODEL
+                result["endpoint"] = EDGE_AI_ENDPOINT
+                ai_insights = result
+                socketio.emit("ai_insights", ai_insights)
+
+                # Now try to overlay the AI model's natural-language summary
                 snapshot = _build_telemetry_snapshot()
                 if snapshot:
                     ai_summary = _call_edge_ai(snapshot)
                     if ai_summary:
                         result["summary"] = ai_summary
                         result["status"] = "connected"
-                        result["model"] = EDGE_AI_MODEL
-                        result["endpoint"] = EDGE_AI_ENDPOINT
                         print(f"[EdgeAI] Analysis complete — {result['fleet_status']}, {len(result.get('insights', []))} insights")
                     else:
                         result["status"] = "fallback"
                         result["model"] = f"{EDGE_AI_MODEL} (fallback→rules)"
                         print("[EdgeAI] Model unavailable, using rule engine only")
+                    result["last_updated"] = datetime.now(timezone.utc).isoformat()
             else:
                 result["status"] = "demo"
                 result["model"] = "rule-engine (demo)"
