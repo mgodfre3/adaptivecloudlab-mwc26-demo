@@ -20,6 +20,8 @@ graph LR
 > **All components run on AKS Arc (Azure Local)** — 2× Lenovo SE350 edge servers with an NVIDIA A2 GPU, connected to Azure via Arc. MetalLB provides the external IP; NGINX Ingress terminates TLS.
 >
 > *Detailed diagram with node IPs and platform services: [docs/architecture.md](docs/architecture.md)*
+>
+> *Deep dive — infrastructure, data flow, AI Insights on-premises, and edge computing details: [docs/explanation.md](docs/explanation.md)*
 
 ---
 
@@ -315,6 +317,7 @@ adaptivecloudlab-mwc26-demo/
 ├── README.md                           # This file
 ├── docs/
 │   ├── architecture.md                 # Detailed Mermaid architecture diagram
+│   ├── explanation.md                  # Deep dive: infrastructure, data flow, edge AI insights
 │   └── images/
 │       ├── drone-dashboard.png         # Drone Network Monitor screenshot
 │       └── grafana-dashboard.png       # Grafana cluster & GPU dashboard screenshot
