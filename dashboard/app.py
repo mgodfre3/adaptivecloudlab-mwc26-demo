@@ -112,33 +112,219 @@ def _start_eventhub_consumer():
 # ── Demo-mode synthetic data generator ───────────────────────────────────────
 
 # Barcelona, Spain — Fira Gran Via / MWC venue area
-BCN_LAT, BCN_LON, RADIUS = 41.3574, 2.1286, 0.04
+BCN_LAT, BCN_LON = 41.3574, 2.1286
+
+# Base / home pad — MWC venue itself
+BASE_LAT, BASE_LON = 41.3545, 2.1279
+
+# Battery thresholds
+BATTERY_RETURN = 18        # % — start flying home
+BATTERY_CRITICAL = 5       # % — forced landing
+BATTERY_LAUNCH = 92        # % — charged enough to launch
+CHARGE_RATE = 0.35         # % per tick while charging
+DRAIN_RATE_MIN = 0.025     # % per tick while flying
+DRAIN_RATE_MAX = 0.065     # % per tick while flying
+LAUNCH_CLIMB_TICKS = 8     # ticks to reach patrol altitude after launch
+LANDING_TICKS = 6          # ticks to descend at base
+
+# Patrol waypoints — landmarks around Barcelona spread over ~8 km
+PATROL_WAYPOINTS = [
+    (41.3700, 2.1100),  # Montjuic hilltop
+    (41.3650, 2.1500),  # Eixample / Sagrada Familia area
+    (41.3870, 2.1200),  # Placa Catalunya
+    (41.3520, 2.1680),  # Port Olimpic
+    (41.3780, 2.1450),  # Gracia
+    (41.3460, 2.1350),  # Zona Franca industrial
+    (41.3620, 2.1050),  # Sants station
+    (41.3900, 2.1650),  # Diagonal Mar
+    (41.3740, 2.0980),  # Pedralbes
+    (41.3580, 2.1800),  # Poblenou
+    (41.3830, 2.1100),  # Les Corts / Camp Nou
+    (41.3480, 2.1500),  # Parallel / Poble Sec
+]
+
+# NATO phonetic alphabet for drone callsigns — cycles through these
+CALLSIGNS = [
+    "Alpha", "Bravo", "Charlie", "Delta", "Echo",
+    "Foxtrot", "Golf", "Hotel", "India", "Juliet",
+    "Kilo", "Lima", "Mike", "November", "Oscar",
+    "Papa", "Quebec", "Romeo", "Sierra", "Tango",
+    "Uniform", "Victor", "Whiskey", "Xray", "Yankee", "Zulu",
+]
+_callsign_idx = 0  # global counter for next callsign
+
+
+def _next_callsign() -> str:
+    """Return the next callsign from the NATO alphabet, cycling forever."""
+    global _callsign_idx
+    name = CALLSIGNS[_callsign_idx % len(CALLSIGNS)]
+    _callsign_idx += 1
+    return name
 
 
 class _DemoDrone:
-    def __init__(self, idx: int):
-        self.drone_id = f"drone-{idx}"
-        angle = 2 * math.pi * (idx - 1) / max(DRONE_COUNT, 1)
-        self.lat = BCN_LAT + RADIUS * 0.6 * math.cos(angle)
-        self.lon = BCN_LON + RADIUS * 0.6 * math.sin(angle)
-        self.alt = random.uniform(50, 150)
+    """Simulates a single drone with realistic patrol routes,
+    battery-driven return-to-base, and lifecycle management."""
+
+    def __init__(self, callsign: str, slot: int):
+        self.drone_id = f"drone-{callsign.lower()}"
+        self.callsign = callsign
+        self.slot = slot  # fleet position (0..N-1) for replacement tracking
+
+        # Start at base with slight offset so drones don't stack
+        angle = 2 * math.pi * slot / max(DRONE_COUNT, 1)
+        self.lat = BASE_LAT + 0.0004 * math.cos(angle)
+        self.lon = BASE_LON + 0.0004 * math.sin(angle)
+        self.alt = 0.0
         self.heading = random.uniform(0, 360)
-        self.speed = random.uniform(5, 15)
-        self.battery = random.uniform(60, 100)
-        self.status = "patrolling"
+        self.speed = 0.0
+        self.battery = random.uniform(88, 100)
+
+        # Lifecycle
+        self.status = "launching"
+        self._lifecycle_tick = 0  # ticks in current phase
+
+        # Patrol route: pick 4-6 random waypoints for this drone
+        self.waypoints = random.sample(
+            PATROL_WAYPOINTS, random.randint(4, min(6, len(PATROL_WAYPOINTS)))
+        )
+        self.wp_idx = 0
+        self.retired = False
+
+    # ── Movement helpers ─────────────────────────────────────────────────
+
+    def _distance_deg(self, lat2: float, lon2: float) -> float:
+        """Euclidean distance in degrees (good enough for ~10 km scale)."""
+        return math.sqrt((lat2 - self.lat) ** 2 + (lon2 - self.lon) ** 2)
+
+    def _move_toward(self, target_lat: float, target_lon: float) -> bool:
+        """Fly toward *target* at current speed. Returns True when arrived."""
+        dlat = target_lat - self.lat
+        dlon = target_lon - self.lon
+        dist = math.sqrt(dlat ** 2 + dlon ** 2)
+
+        if dist < 0.0004:  # ~40 m — close enough
+            return True
+
+        # degrees per tick  (speed_mps * 3 s / ~111 000 m/deg)
+        step = min(self.speed * 3.0 / 111_000, dist)
+        self.lat += dlat / dist * step
+        self.lon += dlon / dist * step
+
+        # Update heading to face target
+        self.heading = math.degrees(math.atan2(dlon, dlat)) % 360
+
+        # Slight realism wobble
+        self.lat += random.gauss(0, 0.00003)
+        self.lon += random.gauss(0, 0.00003)
+        return False
+
+    # ── Lifecycle step ───────────────────────────────────────────────────
 
     def step(self) -> dict:
-        self.lat += random.gauss(0, 0.0005)
-        self.lon += random.gauss(0, 0.0005)
-        self.alt = max(20, self.alt + random.gauss(0, 2))
-        self.heading = (self.heading + random.gauss(0, 10)) % 360
-        self.speed = max(0, self.speed + random.gauss(0, 1))
-        self.battery = max(0, self.battery - random.uniform(0.02, 0.1))
-        if self.battery < 15:
-            self.status = "returning"
-        else:
-            self.status = random.choices(["patrolling", "hovering"], weights=[0.85, 0.15])[0]
+        """Advance simulation by one tick (~3 s) and return telemetry dict."""
+        self._lifecycle_tick += 1
 
+        if self.status == "launching":
+            self._step_launching()
+        elif self.status in ("patrolling", "hovering"):
+            self._step_patrolling()
+        elif self.status == "returning":
+            self._step_returning()
+        elif self.status == "landing":
+            self._step_landing()
+        elif self.status == "charging":
+            self._step_charging()
+
+        return self._build_payload()
+
+    def _step_launching(self):
+        """Climb from base to patrol altitude."""
+        self.speed = random.uniform(3, 6)
+        self.alt = min(120, self.alt + random.uniform(10, 20))
+        self.battery -= random.uniform(DRAIN_RATE_MIN, DRAIN_RATE_MAX)
+        # Drift away from base slightly
+        wp = self.waypoints[0]
+        self._move_toward(wp[0], wp[1])
+        if self._lifecycle_tick >= LAUNCH_CLIMB_TICKS:
+            self.status = "patrolling"
+            self.speed = random.uniform(8, 14)
+            self._lifecycle_tick = 0
+            print(f"  [Demo] {self.drone_id} launched — heading to waypoint 1")
+
+    def _step_patrolling(self):
+        """Fly between waypoints; drain battery."""
+        wp = self.waypoints[self.wp_idx]
+        arrived = self._move_toward(wp[0], wp[1])
+
+        self.speed = max(4, min(18, self.speed + random.gauss(0, 0.8)))
+        self.alt = max(40, min(180, self.alt + random.gauss(0, 1.5)))
+        self.battery -= random.uniform(DRAIN_RATE_MIN, DRAIN_RATE_MAX)
+
+        if arrived:
+            # Move to next waypoint; occasionally hover for a few ticks
+            self.wp_idx = (self.wp_idx + 1) % len(self.waypoints)
+            if random.random() < 0.25:
+                self.status = "hovering"
+                self.speed = random.uniform(0, 2)
+                self._lifecycle_tick = 0
+            else:
+                print(f"  [Demo] {self.drone_id} reached waypoint — next #{self.wp_idx + 1}")
+
+        # Check battery
+        if self.battery <= BATTERY_RETURN:
+            self.status = "returning"
+            self._lifecycle_tick = 0
+            self.speed = random.uniform(12, 16)  # hurry home
+            print(f"  [Demo] {self.drone_id} LOW BATTERY ({self.battery:.0f}%) — returning to base")
+
+        # Hovering timeout — resume patrol after a short pause
+        if self.status == "hovering" and self._lifecycle_tick >= random.randint(3, 8):
+            self.status = "patrolling"
+            self.speed = random.uniform(8, 14)
+            self._lifecycle_tick = 0
+
+    def _step_returning(self):
+        """Fly back to base."""
+        arrived = self._move_toward(BASE_LAT, BASE_LON)
+        self.speed = max(6, min(18, self.speed + random.gauss(0, 0.5)))
+        self.alt = max(30, min(180, self.alt + random.gauss(0, 1)))
+        self.battery = max(0, self.battery - random.uniform(DRAIN_RATE_MIN, DRAIN_RATE_MAX))
+
+        if arrived or self.battery <= BATTERY_CRITICAL:
+            self.status = "landing"
+            self._lifecycle_tick = 0
+            print(f"  [Demo] {self.drone_id} reached base — landing")
+
+    def _step_landing(self):
+        """Descend to ground at base."""
+        self.speed = max(0, self.speed - random.uniform(0.5, 1.5))
+        self.alt = max(0, self.alt - random.uniform(12, 25))
+        self.battery = max(0, self.battery - random.uniform(0.01, 0.02))
+        self._move_toward(BASE_LAT, BASE_LON)
+
+        if self._lifecycle_tick >= LANDING_TICKS or self.alt <= 0:
+            self.alt = 0
+            self.speed = 0
+            self.status = "charging"
+            self._lifecycle_tick = 0
+            print(f"  [Demo] {self.drone_id} landed — charging")
+
+    def _step_charging(self):
+        """Sit at base and recharge. Mark retired when full."""
+        self.speed = 0
+        self.alt = 0
+        self.lat = BASE_LAT + random.gauss(0, 0.00005)
+        self.lon = BASE_LON + random.gauss(0, 0.00005)
+        self.battery = min(100, self.battery + CHARGE_RATE)
+
+        if self.battery >= BATTERY_LAUNCH:
+            self.retired = True
+            print(f"  [Demo] {self.drone_id} fully charged — retiring for replacement")
+
+    # ── Telemetry payload ────────────────────────────────────────────────
+
+    def _build_payload(self) -> dict:
         rsrp = random.randint(-120, -60)
         return {
             "drone_id": self.drone_id,
@@ -162,7 +348,7 @@ class _DemoDrone:
                 "packet_loss_pct": round(random.uniform(0, 2), 3),
                 "connected": random.choices([True, False], weights=[0.95, 0.05])[0],
             },
-            "battery_pct": round(self.battery, 1),
+            "battery_pct": round(max(0, self.battery), 1),
             "status": self.status,
             "environment": {
                 "temperature_c": round(random.uniform(5, 35), 1),
@@ -173,22 +359,49 @@ class _DemoDrone:
 
 
 def _start_demo_generator():
-    """Generate synthetic telemetry for demo/kiosk mode."""
-    print(f"[Demo] Running in DEMO MODE — generating synthetic data for {DRONE_COUNT} drones")
-    drones = [_DemoDrone(i) for i in range(1, DRONE_COUNT + 1)]
+    """Fleet manager: generate synthetic telemetry, cycle drones on battery depletion."""
+    global _callsign_idx
+    _callsign_idx = 0  # reset on start
+
+    print(f"[Demo] Running in DEMO MODE — managing fleet of {DRONE_COUNT} drones")
+    print(f"[Demo] Drones patrol Barcelona, return to base at {BATTERY_RETURN}% battery,")
+    print(f"[Demo] charge to {BATTERY_LAUNCH}%, then a replacement drone launches.")
+
+    # Seed initial fleet with staggered batteries for visual variety
+    fleet: list[_DemoDrone] = []
+    for slot in range(DRONE_COUNT):
+        cs = _next_callsign()
+        d = _DemoDrone(cs, slot)
+        # Stagger initial battery so drones don't all return at once
+        d.battery = random.uniform(40, 100)
+        fleet.append(d)
+        print(f"  [Demo] Slot {slot}: {d.drone_id} (battery {d.battery:.0f}%)")
+
     while not _shutdown.is_set():
-        for d in drones:
+        for i, d in enumerate(fleet):
             payload = d.step()
             drone_state[d.drone_id] = payload
             socketio.emit("telemetry", payload)
+
+            # Replace retired drones
+            if d.retired:
+                old_id = d.drone_id
+                # Remove old drone from state
+                drone_state.pop(old_id, None)
+                socketio.emit("drone_retired", {"drone_id": old_id})
+
+                # Launch replacement
+                cs = _next_callsign()
+                new_drone = _DemoDrone(cs, d.slot)
+                fleet[i] = new_drone
+                print(f"  [Demo] Slot {d.slot}: {old_id} retired -> {new_drone.drone_id} launching")
+
         _shutdown.wait(3)
 
 
 # ── Edge AI Analyzer ─────────────────────────────────────────────────────────
 
-_AI_SYSTEM_PROMPT = """You are a drone fleet analyst. Output ONLY a JSON object.
-Format: {"fleet_status":"healthy","summary":"one sentence","insights":[{"type":"coverage","severity":"warning","drone_id":"drone-1","title":"Weak signal","detail":"RSRP -105dBm"}]}
-Rules: 2 insights max, short titles (<8 words), short details (<15 words). RSRP<-100=poor, latency>15ms=high, battery<30%=critical, loss>1%=concerning."""
+_AI_SYSTEM_PROMPT = """You are a drone fleet analyst. Respond with ONE short sentence summarising fleet health. Example: "Fleet healthy, all drones nominal." or "Drone-alpha signal weak at -105 dBm, drone-charlie battery low at 18%." Do NOT output JSON or bullet points."""
 
 
 def _build_telemetry_snapshot() -> str:
@@ -203,249 +416,24 @@ def _build_telemetry_snapshot() -> str:
     for did, d in drone_state.items():
         net = d.get("network", {})
         bat = d.get("battery_pct", 100)
+        status = d.get("status", "unknown")
         rsrp = net.get("signal_rsrp_dbm", -80)
         sinr = net.get("signal_sinr_db", 20)
         lat_ms = net.get("latency_ms", 5)
         loss = net.get("packet_loss_pct", 0)
         dl = net.get("downlink_mbps", 0)
         lines.append(
-            f"{did}: rsrp={rsrp}dBm sinr={sinr}dB lat={lat_ms}ms loss={loss}% dl={dl}Mbps bat={bat}%"
+            f"{did} [{status}]: rsrp={rsrp}dBm sinr={sinr}dB lat={lat_ms}ms loss={loss}% dl={dl}Mbps bat={bat}%"
         )
     return "\n".join(lines)
 
 
-def _try_parse_json(content: str):
-    """Try to parse JSON, with truncation repair if needed."""
-    try:
-        return json.loads(content)
-    except json.JSONDecodeError:
-        pass
+def _call_edge_ai(prompt: str) -> str | None:
+    """Call Foundry Local and return the model's one-sentence summary text.
 
-    # --- Repair truncated JSON ---
-    repaired = content.rstrip()
-
-    # 1. Close any unterminated string (odd number of unescaped quotes)
-    #    Count quotes that aren't escaped
-    in_string = False
-    for i, ch in enumerate(repaired):
-        if ch == '"' and (i == 0 or repaired[i - 1] != '\\'):
-            in_string = not in_string
-    if in_string:
-        repaired += '"'
-
-    # 2. Trim back to the last cleanly-ended value
-    #    Remove trailing partial tokens after the last complete value
-    while repaired and repaired[-1] in (',', ':', ' ', '\n', '\r', '\t'):
-        repaired = repaired[:-1]
-
-    # 3. Close open brackets/braces
-    open_braces = repaired.count('{') - repaired.count('}')
-    open_brackets = repaired.count('[') - repaired.count(']')
-    repaired += ']' * max(0, open_brackets)
-    repaired += '}' * max(0, open_braces)
-
-    try:
-        result = json.loads(repaired)
-        print(f"[EdgeAI] JSON repaired successfully ({len(repaired)} chars)")
-        return result
-    except json.JSONDecodeError:
-        pass
-
-    # 4. More aggressive: trim back to last complete array element or object field
-    #    Find last "}," or "]," or complete quoted string followed by comma/bracket
-    for trim_to in ['"},', '],', '",', '}', ']', '"']:
-        idx = content.rfind(trim_to)
-        if idx > 0:
-            candidate = content[:idx + len(trim_to)]
-            # Remove trailing comma
-            candidate = candidate.rstrip(',')
-            # Close remaining structures
-            ob = candidate.count('{') - candidate.count('}')
-            oq = candidate.count('[') - candidate.count(']')
-            candidate += ']' * max(0, oq)
-            candidate += '}' * max(0, ob)
-            try:
-                result = json.loads(candidate)
-                print(f"[EdgeAI] JSON repaired (aggressive, {len(candidate)} chars)")
-                return result
-            except json.JSONDecodeError:
-                continue
-
-    print("[EdgeAI] JSON repair failed")
-    return None
-
-
-def _normalize_ai_response(parsed) -> dict:
-    """Normalize whatever JSON the model returned into our expected format.
-
-    Phi-3 returns varying formats: string arrays, object arrays, nested dicts, etc.
-    We transform any of these into the standard dashboard format.
+    We no longer ask the model for JSON — just a short natural-language
+    summary.  Rule-engine insights are generated separately.
     """
-    import re as _re
-
-    # If it's a list, transform array to standard format
-    if isinstance(parsed, list):
-        insights = []
-        has_critical = False
-        has_warning = False
-        for item in parsed[:3]:
-            if isinstance(item, str):
-                # Insight is a plain string — extract info
-                severity = "warning" if any(k in item.lower() for k in ["low", "weak", "poor", "high"]) else "info"
-                if severity == "warning":
-                    has_warning = True
-                drone_match = _re.search(r'[Dd]rone[- ]?(\d+)', item)
-                drone_id = f"drone-{drone_match.group(1)}" if drone_match else "fleet"
-                insights.append({
-                    "type": "performance",
-                    "severity": severity,
-                    "drone_id": drone_id,
-                    "title": item[:60],
-                    "detail": item[:120],
-                })
-            elif isinstance(item, dict):
-                severity = str(item.get("severity", "warning")).lower()
-                if "critical" in severity:
-                    severity = "critical"
-                    has_critical = True
-                elif any(k in severity for k in ["warning", "medium", "high"]):
-                    severity = "warning"
-                    has_warning = True
-                else:
-                    severity = "info"
-                insights.append({
-                    "type": item.get("type", "performance"),
-                    "severity": severity,
-                    "drone_id": item.get("drone_id", item.get("drone", item.get("id", "fleet"))),
-                    "title": str(item.get("title", item.get("issue", item.get("reason", "Issue"))))[:60],
-                    "detail": str(item.get("detail", item.get("recommendation", item.get("reason", ""))))[:120],
-                })
-        status = "critical" if has_critical else ("degraded" if has_warning else "healthy")
-        return {
-            "fleet_status": status,
-            "summary": f"AI detected {len(insights)} issue(s) across the fleet",
-            "insights": insights,
-        }
-
-    # Must be a dict at this point
-    if not isinstance(parsed, dict):
-        return {"fleet_status": "healthy", "summary": "AI analysis complete", "insights": []}
-
-    # Extract and normalize fleet_status
-    fs = str(parsed.get("fleet_status", "healthy")).lower()
-    if "critical" in fs or "danger" in fs:
-        fs = "critical"
-    elif any(k in fs for k in ["degrad", "maint", "warning", "attention"]):
-        fs = "degraded"
-    else:
-        fs = "healthy"
-
-    # Extract summary — model sometimes returns a dict of averages
-    summary_raw = parsed.get("summary", "")
-    if isinstance(summary_raw, dict):
-        # Convert summary dict to a readable string
-        parts = [f"{k}: {v}" for k, v in summary_raw.items()]
-        summary = "Fleet averages — " + ", ".join(parts[:4])
-    else:
-        summary = str(summary_raw)[:200]
-
-    # Extract and normalize insights
-    insights_raw = parsed.get("insights", parsed.get("issues", parsed.get("results", [])))
-    if isinstance(insights_raw, list):
-        normalized = _normalize_ai_response(insights_raw)
-        return {
-            "fleet_status": fs,
-            "summary": summary or normalized.get("summary", ""),
-            "insights": normalized.get("insights", []),
-        }
-
-    return {"fleet_status": fs, "summary": summary, "insights": []}
-
-
-def _parse_text_response(text: str) -> dict:
-    """Parse a prose/text AI response into our standard insights format.
-
-    When the model refuses to output JSON, we extract insights from its
-    natural-language analysis by looking for drone IDs and issue keywords.
-    """
-    import re
-    insights = []
-    # Split by drone references
-    drone_pattern = re.compile(r'[Dd]rone[- ]?(\d+)', re.IGNORECASE)
-    severity_keywords = {
-        "critical": ["critical", "severe", "danger", "very low", "extremely"],
-        "warning": ["low", "weak", "high latency", "elevated", "poor", "concerning", "packet loss"],
-        "info": ["normal", "good", "stable", "healthy", "optimal"],
-    }
-    type_keywords = {
-        "coverage": ["rsrp", "signal", "coverage", "dbm", "sinr"],
-        "performance": ["latency", "throughput", "bandwidth", "mbps", "speed", "downlink"],
-        "battery": ["battery", "charge", "power"],
-        "anomaly": ["loss", "packet", "error", "anomal"],
-    }
-
-    lines = text.split("\n")
-    current_drone = None
-    has_warning = False
-    has_critical = False
-
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        # Check for drone ID
-        dm = drone_pattern.search(line)
-        if dm:
-            current_drone = f"drone-{dm.group(1)}"
-
-        # Check for issue indicators
-        line_lower = line.lower()
-        if any(kw in line_lower for kw in ["low", "weak", "high", "poor", "loss", "critical", "concern"]):
-            # Determine severity
-            severity = "info"
-            for sev, keywords in severity_keywords.items():
-                if any(kw in line_lower for kw in keywords):
-                    severity = sev
-                    break
-            if severity == "critical":
-                has_critical = True
-            elif severity == "warning":
-                has_warning = True
-
-            # Determine type
-            insight_type = "performance"
-            for itype, keywords in type_keywords.items():
-                if any(kw in line_lower for kw in keywords):
-                    insight_type = itype
-                    break
-
-            # Clean up the line for display
-            detail = re.sub(r'^[-*\d.)\s]+', '', line).strip()
-            if len(detail) > 10 and current_drone and len(insights) < 3:
-                insights.append({
-                    "type": insight_type,
-                    "severity": severity,
-                    "drone_id": current_drone or "fleet",
-                    "title": f"{insight_type.title()} issue" if len(detail) > 60 else detail[:60],
-                    "detail": detail[:120],
-                })
-
-    status = "critical" if has_critical else ("degraded" if has_warning else "healthy")
-    return {
-        "fleet_status": status,
-        "summary": f"AI analyzed fleet — {len(insights)} issue(s) detected",
-        "insights": insights if insights else [{
-            "type": "performance",
-            "severity": "info",
-            "drone_id": "fleet",
-            "title": "Fleet analyzed",
-            "detail": text[:120].strip(),
-        }],
-    }
-
-
-def _call_edge_ai(prompt: str) -> dict | None:
-    """Call Foundry Local via its OpenAI-compatible /v1/chat/completions API."""
     import urllib.request
     import urllib.error
     import ssl
@@ -455,10 +443,10 @@ def _call_edge_ai(prompt: str) -> dict | None:
         "model": EDGE_AI_MODEL,
         "messages": [
             {"role": "system", "content": _AI_SYSTEM_PROMPT},
-            {"role": "user", "content": f"5G drone fleet readings:\n{prompt}\nReturn ONLY a JSON object with fleet_status, summary, and insights array."},
+            {"role": "user", "content": f"Drone fleet readings:\n{prompt}\nOne sentence summary:"},
         ],
-        "temperature": 0.1,
-        "max_tokens": 450,
+        "temperature": 0.3,
+        "max_tokens": 120,
     }).encode()
 
     headers = {"Content-Type": "application/json"}
@@ -472,50 +460,23 @@ def _call_edge_ai(prompt: str) -> dict | None:
 
     req = urllib.request.Request(url, data=body, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=60, context=ctx) as resp:
+        with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
             result = json.loads(resp.read())
-            # OpenAI-compatible response: choices[0].message.content
             choices = result.get("choices", [])
             if not choices:
                 print("[EdgeAI] No choices in response")
                 return None
             content = choices[0].get("message", {}).get("content", "")
-            # Also check delta field (Foundry Local may return in delta)
             if not content:
                 content = choices[0].get("delta", {}).get("content", "")
-            print(f"[EdgeAI] Raw content ({len(content)} chars): {content[:300]}...")
-            # Strip markdown fences if present
-            content = content.strip()
+            content = content.strip().strip('"').strip("'")
+            # Remove markdown fences if the model wrapped output
             if content.startswith("```"):
-                content = content.split("\n", 1)[1] if "\n" in content else content
+                content = content.split("\n", 1)[-1]
             if content.endswith("```"):
-                content = content[:-3]
-            content = content.strip()
-            if content.startswith("json"):
-                content = content[4:].strip()
-            # Find the first JSON structure (object or array)
-            obj_start = content.find("{")
-            arr_start = content.find("[")
-            if obj_start == -1 and arr_start == -1:
-                # No JSON — parse the prose response into insights
-                print("[EdgeAI] No JSON found, parsing text response")
-                return _parse_text_response(content)
-            # Use whichever comes first
-            if arr_start != -1 and (obj_start == -1 or arr_start < obj_start):
-                start = arr_start
-            else:
-                start = obj_start
-            json_content = content[start:]
-            # Remove trailing markdown fences or other non-JSON text after the structure
-            import re
-            json_content = re.sub(r'\s*```\s*$', '', json_content)
-            json_content = json_content.strip()
-            parsed = _try_parse_json(json_content)
-            if parsed is None:
-                # JSON extraction failed — fallback to text parsing
-                print("[EdgeAI] JSON parse failed, parsing text response instead")
-                return _parse_text_response(content)
-            return _normalize_ai_response(parsed)
+                content = content[:-3].strip()
+            print(f"[EdgeAI] Summary: {content[:200]}")
+            return content if content else None
     except (urllib.error.URLError, Exception) as e:
         print(f"[EdgeAI] Error calling model: {e}")
         return None
@@ -624,36 +585,38 @@ def _start_ai_analyzer():
 
     while not _shutdown.is_set():
         try:
+            # Always use the rule engine for reliable, detailed insights
+            result = _generate_demo_insights()
+            result["last_updated"] = datetime.now(timezone.utc).isoformat()
+
             if EDGE_AI_ENABLED:
+                # Emit rule-engine insights immediately (don't wait for model)
+                result["status"] = "analyzing"
+                result["model"] = EDGE_AI_MODEL
+                result["endpoint"] = EDGE_AI_ENDPOINT
+                ai_insights = result
+                socketio.emit("ai_insights", ai_insights)
+
+                # Now try to overlay the AI model's natural-language summary
                 snapshot = _build_telemetry_snapshot()
                 if snapshot:
-                    result = _call_edge_ai(snapshot)
-                    if result:
-                        result["last_updated"] = datetime.now(timezone.utc).isoformat()
+                    ai_summary = _call_edge_ai(snapshot)
+                    if ai_summary:
+                        result["summary"] = ai_summary
                         result["status"] = "connected"
-                        result["model"] = EDGE_AI_MODEL
-                        result["endpoint"] = EDGE_AI_ENDPOINT
-                        ai_insights = result
-                        socketio.emit("ai_insights", ai_insights)
-                        print(f"[EdgeAI] Analysis complete — {result.get('fleet_status', '?')}, {len(result.get('insights', []))} insights")
+                        print(f"[EdgeAI] Analysis complete — {result['fleet_status']}, {len(result.get('insights', []))} insights")
                     else:
-                        # Model call failed — fallback to rules
-                        print("[EdgeAI] Model returned no result, falling back to rule engine")
-                        result = _generate_demo_insights()
-                        result["last_updated"] = datetime.now(timezone.utc).isoformat()
                         result["status"] = "fallback"
                         result["model"] = f"{EDGE_AI_MODEL} (fallback→rules)"
-                        ai_insights = result
-                        socketio.emit("ai_insights", ai_insights)
+                        print("[EdgeAI] Model unavailable, using rule engine only")
+                    result["last_updated"] = datetime.now(timezone.utc).isoformat()
             else:
-                # Demo mode — generate insights from rules
-                result = _generate_demo_insights()
-                result["last_updated"] = datetime.now(timezone.utc).isoformat()
                 result["status"] = "demo"
                 result["model"] = "rule-engine (demo)"
                 result["endpoint"] = "local"
-                ai_insights = result
-                socketio.emit("ai_insights", ai_insights)
+
+            ai_insights = result
+            socketio.emit("ai_insights", ai_insights)
         except Exception as e:
             print(f"[EdgeAI] Error: {e}")
             ai_insights["status"] = "error"
@@ -680,6 +643,8 @@ def handle_connect():
     """Send current state to newly connected client."""
     for payload in drone_state.values():
         socketio.emit("telemetry", payload)
+    if ai_insights.get("insights"):
+        socketio.emit("ai_insights", ai_insights)
 
 
 if __name__ == "__main__":

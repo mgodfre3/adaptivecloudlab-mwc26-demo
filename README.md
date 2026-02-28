@@ -2,7 +2,7 @@
 
 **MWC 2026 Demo — Adaptive Cloud Lab**
 
-A live kiosk demo showing five autonomous drones monitoring 5G network quality across the Barcelona MWC venue area. Telemetry flows through Azure IoT Hub, while a small language model (Phi-3 Mini) running on an NVIDIA GPU at the edge provides real-time AI-powered insights — all orchestrated on AKS Arc (Azure Local).
+A live kiosk demo showing autonomous drones monitoring 5G network quality across the Barcelona MWC venue area. Drones patrol waypoints around 12 Barcelona landmarks, return to base when battery is low, and are replaced by fresh drones with new callsigns — creating a continuous, realistic fleet lifecycle. Telemetry flows through Azure IoT Hub, while a small language model (Phi-3 Mini) running on an NVIDIA GPU at the edge provides real-time AI-powered insights — all orchestrated on AKS Arc (Azure Local).
 
 ```mermaid
 graph LR
@@ -35,7 +35,8 @@ Real-time kiosk UI showing 5 autonomous drones over Barcelona with live 5G telem
 - **Left panel** — Dark-themed Leaflet map with live drone positions, flight trails, and color-coded signal indicators (green = strong, yellow = moderate, red = weak)
 - **Right panel** — Per-drone telemetry cards showing RSRP, SINR, DL/UL throughput, latency, packet loss, altitude, speed, and battery level
 - **Top-right** — Real-time connection status (`CONNECTED`), AI health indicator (`AI HEALTHY`), and live clock
-- **Edge AI Analysis** — Phi-3 Mini analyzes fleet-wide telemetry every 15 seconds and surfaces actionable insights (signal degradation, coverage gaps, drone health)
+- **Edge AI Analysis** — Rule-engine generates instant insights (signal degradation, battery alerts, coverage gaps) while Phi-3 Mini overlays a fleet health summary
+- **Drone lifecycle** — Drones patrol waypoints, return to base at low battery, charge, and are replaced by new drones with NATO callsigns (Alpha → Zulu)
 - **Bottom bar** — Fleet-wide aggregates: average RSRP, average DL throughput, average latency, active drone count, and messages/sec throughput
 
 ### Grafana Cluster & GPU Monitoring
@@ -64,8 +65,8 @@ Full observability stack with Prometheus, Grafana, and NVIDIA DCGM Exporter prov
 | **Foundry Local Inference Operator** | Private Preview operator that manages SLM lifecycle on GPU nodes |
 | **Phi-3 Mini 4K Instruct** | Microsoft 3.8B-parameter SLM for edge AI inference |
 | **Azure IoT Hub** | Cloud-managed device registry and D2C telemetry ingestion |
-| **Drone Telemetry Simulator** | Python script simulating 5 drones with 5G telemetry |
-| **Live Dashboard** | Flask + Socket.IO + Leaflet.js real-time kiosk UI |
+| **Drone Telemetry Simulator** | Python script simulating autonomous drones with waypoint patrols, battery return-to-base, and fleet cycling |
+| **Live Dashboard** | Flask + Socket.IO + Leaflet.js real-time kiosk UI with rule-engine insights and Phi-3 AI summary |
 
 ---
 
@@ -362,12 +363,33 @@ adaptivecloudlab-mwc26-demo/
 |---|---|
 | **Dark-theme kiosk mode** | Designed for large screens and event booths — auto-refreshing, no user interaction required |
 | **Real-time Leaflet map** | Drone positions on a dark tile layer centered on Barcelona (Fira Gran Via) with colored flight trails and signal-strength indicators |
-| **5G telemetry cards** | Per-drone metrics: RSRP (dBm), SINR (dB), DL/UL throughput (Mbps), latency (ms), packet loss (%), altitude (m), speed (m/s), battery level |
-| **Edge AI Insights** | Phi-3 Mini analyzes fleet telemetry every 15 seconds — surfaces signal degradation, coverage gaps, and recommended actions via JSON insights |
-| **Fleet status badges** | Color-coded per-drone status: `PATROLLING` (green), `RETURNING` (yellow), `EMERGENCY` (red) |
+| **5G telemetry cards** | Per-drone metrics: RSRP (dBm), RSRQ (dB), SINR (dB), DL/UL throughput (Mbps), latency (ms), packet loss (%), altitude (m), speed (m/s), battery level |
+| **Drone lifecycle** | Drones patrol 12 Barcelona waypoints, return to base at 18% battery, charge to 92%, and are replaced by new drones with cycling NATO callsigns (Alpha → Zulu) |
+| **Edge AI Insights** | Rule-engine generates instant insights (signal degradation, battery alerts, coverage gaps); Phi-3 Mini overlays a one-sentence fleet health summary — no JSON parsing, fully reliable |
+| **Fleet status badges** | Color-coded per-drone status: `PATROLLING` (green), `RETURNING` (yellow), `LAUNCHING` (blue), `CHARGING` (cyan), `LANDING` (orange), `EMERGENCY` (red) |
 | **Aggregate statistics** | Bottom bar with fleet-wide averages: RSRP, DL throughput, latency, active drone count, and messages/sec |
 | **Health indicators** | Top-right badges: WebSocket connection status, AI model health, live clock |
 | **Demo mode** | Runs entirely with synthetic data when `DEMO_MODE=true` — no IoT Hub connection needed |
+
+### Drone Lifecycle
+
+Each drone follows a continuous autonomous cycle:
+
+1. **Launch** — New drone spawns at the Barcelona base station (`41.3545°N, 2.1279°E`) with a fresh NATO callsign and full battery
+2. **Patrol** — Flies a waypoint-based route through 12 Barcelona landmarks (Sagrada Família, Park Güell, Camp Nou, Port Olímpic, etc.)
+3. **Return** — When battery drops below 18%, drone automatically navigates back to base
+4. **Retire & Replace** — Drone lands, is removed from the fleet, and a new drone with the next callsign (Alpha → Bravo → ... → Zulu → Alpha) launches after charging
+
+This creates a realistic, ever-evolving fleet where drones continuously cycle through the city — ideal for long-running kiosk demos.
+
+### AI Analysis Pipeline
+
+The Edge AI analysis uses a two-layer approach for reliability:
+
+1. **Rule Engine** (instant) — Deterministic analysis of fleet telemetry generates structured insights: signal degradation warnings, battery alerts, coverage gap detection, and network quality assessments
+2. **Phi-3 Summary** (async) — The Edge AI model generates a one-sentence natural-language fleet health summary that overlays the rule-engine insights
+
+Insights are emitted immediately via WebSocket with a 15-second polling fallback at `/api/ai-insights`.
 
 ---
 
@@ -547,7 +569,7 @@ Prometheus ──scrape──> node-exporter (all 6 nodes)
 | Foundry Helm stuck in `pending-install` | Uninstall with `helm uninstall`, then install from local `.tgz` file |
 | trust-manager `SecretTargetsDisabled` | Apply the RBAC + deployment patch in [trust-manager patch](#trust-manager-patch-required) |
 | Model catalog alias not found | Use `phi-3-mini-4k` (not `phi-3-mini-4k-instruct`) |
-| AI insights empty or malformed | Expected — Phi-3 output is variable; the dashboard has multi-layer JSON repair and text fallback |
+| AI insights missing | Check that `simple-websocket` is installed (required for WebSocket transport); the dashboard also has a 15-second polling fallback at `/api/ai-insights` |
 | Dashboard shows no data | Check `DEMO_MODE=true` in `.env` and that the port-forward is running |
 
 ---
