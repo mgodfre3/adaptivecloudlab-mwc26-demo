@@ -345,12 +345,16 @@
   // Real-time via Socket.IO
   socket.on("ai_insights", handleAiInsights);
 
-  // Initial fetch
-  fetch("/api/ai-insights")
-    .then((r) => r.json())
-    .then((data) => {
-      if (data && data.insights) handleAiInsights(data);
-    })
-    .catch(() => {});
+  // Initial fetch + polling fallback (in case WebSocket drops)
+  function fetchAiInsights() {
+    fetch("/api/ai-insights")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data && (data.insights || data.summary)) handleAiInsights(data);
+      })
+      .catch(() => {});
+  }
+  fetchAiInsights();
+  setInterval(fetchAiInsights, 15000);
 
 })();

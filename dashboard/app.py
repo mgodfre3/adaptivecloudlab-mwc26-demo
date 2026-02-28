@@ -401,9 +401,7 @@ def _start_demo_generator():
 
 # ── Edge AI Analyzer ─────────────────────────────────────────────────────────
 
-_AI_SYSTEM_PROMPT = """You are a drone fleet analyst. Output ONLY a JSON object.
-Format: {"fleet_status":"healthy","summary":"one sentence","insights":[{"type":"coverage","severity":"warning","drone_id":"drone-1","title":"Weak signal","detail":"RSRP -105dBm"}]}
-Rules: 2 insights max, short titles (<8 words), short details (<15 words). RSRP<-100=poor, latency>15ms=high, battery<30%=critical, loss>1%=concerning."""
+_AI_SYSTEM_PROMPT = """You are a drone fleet analyst. Respond with ONE short sentence summarising fleet health. Example: "Fleet healthy, all drones nominal." or "Drone-alpha signal weak at -105 dBm, drone-charlie battery low at 18%." Do NOT output JSON or bullet points."""
 
 
 def _build_telemetry_snapshot() -> str:
@@ -418,249 +416,24 @@ def _build_telemetry_snapshot() -> str:
     for did, d in drone_state.items():
         net = d.get("network", {})
         bat = d.get("battery_pct", 100)
+        status = d.get("status", "unknown")
         rsrp = net.get("signal_rsrp_dbm", -80)
         sinr = net.get("signal_sinr_db", 20)
         lat_ms = net.get("latency_ms", 5)
         loss = net.get("packet_loss_pct", 0)
         dl = net.get("downlink_mbps", 0)
         lines.append(
-            f"{did}: rsrp={rsrp}dBm sinr={sinr}dB lat={lat_ms}ms loss={loss}% dl={dl}Mbps bat={bat}%"
+            f"{did} [{status}]: rsrp={rsrp}dBm sinr={sinr}dB lat={lat_ms}ms loss={loss}% dl={dl}Mbps bat={bat}%"
         )
     return "\n".join(lines)
 
 
-def _try_parse_json(content: str):
-    """Try to parse JSON, with truncation repair if needed."""
-    try:
-        return json.loads(content)
-    except json.JSONDecodeError:
-        pass
+def _call_edge_ai(prompt: str) -> str | None:
+    """Call Foundry Local and return the model's one-sentence summary text.
 
-    # --- Repair truncated JSON ---
-    repaired = content.rstrip()
-
-    # 1. Close any unterminated string (odd number of unescaped quotes)
-    #    Count quotes that aren't escaped
-    in_string = False
-    for i, ch in enumerate(repaired):
-        if ch == '"' and (i == 0 or repaired[i - 1] != '\\'):
-            in_string = not in_string
-    if in_string:
-        repaired += '"'
-
-    # 2. Trim back to the last cleanly-ended value
-    #    Remove trailing partial tokens after the last complete value
-    while repaired and repaired[-1] in (',', ':', ' ', '\n', '\r', '\t'):
-        repaired = repaired[:-1]
-
-    # 3. Close open brackets/braces
-    open_braces = repaired.count('{') - repaired.count('}')
-    open_brackets = repaired.count('[') - repaired.count(']')
-    repaired += ']' * max(0, open_brackets)
-    repaired += '}' * max(0, open_braces)
-
-    try:
-        result = json.loads(repaired)
-        print(f"[EdgeAI] JSON repaired successfully ({len(repaired)} chars)")
-        return result
-    except json.JSONDecodeError:
-        pass
-
-    # 4. More aggressive: trim back to last complete array element or object field
-    #    Find last "}," or "]," or complete quoted string followed by comma/bracket
-    for trim_to in ['"},', '],', '",', '}', ']', '"']:
-        idx = content.rfind(trim_to)
-        if idx > 0:
-            candidate = content[:idx + len(trim_to)]
-            # Remove trailing comma
-            candidate = candidate.rstrip(',')
-            # Close remaining structures
-            ob = candidate.count('{') - candidate.count('}')
-            oq = candidate.count('[') - candidate.count(']')
-            candidate += ']' * max(0, oq)
-            candidate += '}' * max(0, ob)
-            try:
-                result = json.loads(candidate)
-                print(f"[EdgeAI] JSON repaired (aggressive, {len(candidate)} chars)")
-                return result
-            except json.JSONDecodeError:
-                continue
-
-    print("[EdgeAI] JSON repair failed")
-    return None
-
-
-def _normalize_ai_response(parsed) -> dict:
-    """Normalize whatever JSON the model returned into our expected format.
-
-    Phi-3 returns varying formats: string arrays, object arrays, nested dicts, etc.
-    We transform any of these into the standard dashboard format.
+    We no longer ask the model for JSON — just a short natural-language
+    summary.  Rule-engine insights are generated separately.
     """
-    import re as _re
-
-    # If it's a list, transform array to standard format
-    if isinstance(parsed, list):
-        insights = []
-        has_critical = False
-        has_warning = False
-        for item in parsed[:3]:
-            if isinstance(item, str):
-                # Insight is a plain string — extract info
-                severity = "warning" if any(k in item.lower() for k in ["low", "weak", "poor", "high"]) else "info"
-                if severity == "warning":
-                    has_warning = True
-                drone_match = _re.search(r'[Dd]rone[- ]?(\d+)', item)
-                drone_id = f"drone-{drone_match.group(1)}" if drone_match else "fleet"
-                insights.append({
-                    "type": "performance",
-                    "severity": severity,
-                    "drone_id": drone_id,
-                    "title": item[:60],
-                    "detail": item[:120],
-                })
-            elif isinstance(item, dict):
-                severity = str(item.get("severity", "warning")).lower()
-                if "critical" in severity:
-                    severity = "critical"
-                    has_critical = True
-                elif any(k in severity for k in ["warning", "medium", "high"]):
-                    severity = "warning"
-                    has_warning = True
-                else:
-                    severity = "info"
-                insights.append({
-                    "type": item.get("type", "performance"),
-                    "severity": severity,
-                    "drone_id": item.get("drone_id", item.get("drone", item.get("id", "fleet"))),
-                    "title": str(item.get("title", item.get("issue", item.get("reason", "Issue"))))[:60],
-                    "detail": str(item.get("detail", item.get("recommendation", item.get("reason", ""))))[:120],
-                })
-        status = "critical" if has_critical else ("degraded" if has_warning else "healthy")
-        return {
-            "fleet_status": status,
-            "summary": f"AI detected {len(insights)} issue(s) across the fleet",
-            "insights": insights,
-        }
-
-    # Must be a dict at this point
-    if not isinstance(parsed, dict):
-        return {"fleet_status": "healthy", "summary": "AI analysis complete", "insights": []}
-
-    # Extract and normalize fleet_status
-    fs = str(parsed.get("fleet_status", "healthy")).lower()
-    if "critical" in fs or "danger" in fs:
-        fs = "critical"
-    elif any(k in fs for k in ["degrad", "maint", "warning", "attention"]):
-        fs = "degraded"
-    else:
-        fs = "healthy"
-
-    # Extract summary — model sometimes returns a dict of averages
-    summary_raw = parsed.get("summary", "")
-    if isinstance(summary_raw, dict):
-        # Convert summary dict to a readable string
-        parts = [f"{k}: {v}" for k, v in summary_raw.items()]
-        summary = "Fleet averages — " + ", ".join(parts[:4])
-    else:
-        summary = str(summary_raw)[:200]
-
-    # Extract and normalize insights
-    insights_raw = parsed.get("insights", parsed.get("issues", parsed.get("results", [])))
-    if isinstance(insights_raw, list):
-        normalized = _normalize_ai_response(insights_raw)
-        return {
-            "fleet_status": fs,
-            "summary": summary or normalized.get("summary", ""),
-            "insights": normalized.get("insights", []),
-        }
-
-    return {"fleet_status": fs, "summary": summary, "insights": []}
-
-
-def _parse_text_response(text: str) -> dict:
-    """Parse a prose/text AI response into our standard insights format.
-
-    When the model refuses to output JSON, we extract insights from its
-    natural-language analysis by looking for drone IDs and issue keywords.
-    """
-    import re
-    insights = []
-    # Split by drone references
-    drone_pattern = re.compile(r'[Dd]rone[- ]?(\d+)', re.IGNORECASE)
-    severity_keywords = {
-        "critical": ["critical", "severe", "danger", "very low", "extremely"],
-        "warning": ["low", "weak", "high latency", "elevated", "poor", "concerning", "packet loss"],
-        "info": ["normal", "good", "stable", "healthy", "optimal"],
-    }
-    type_keywords = {
-        "coverage": ["rsrp", "signal", "coverage", "dbm", "sinr"],
-        "performance": ["latency", "throughput", "bandwidth", "mbps", "speed", "downlink"],
-        "battery": ["battery", "charge", "power"],
-        "anomaly": ["loss", "packet", "error", "anomal"],
-    }
-
-    lines = text.split("\n")
-    current_drone = None
-    has_warning = False
-    has_critical = False
-
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        # Check for drone ID
-        dm = drone_pattern.search(line)
-        if dm:
-            current_drone = f"drone-{dm.group(1)}"
-
-        # Check for issue indicators
-        line_lower = line.lower()
-        if any(kw in line_lower for kw in ["low", "weak", "high", "poor", "loss", "critical", "concern"]):
-            # Determine severity
-            severity = "info"
-            for sev, keywords in severity_keywords.items():
-                if any(kw in line_lower for kw in keywords):
-                    severity = sev
-                    break
-            if severity == "critical":
-                has_critical = True
-            elif severity == "warning":
-                has_warning = True
-
-            # Determine type
-            insight_type = "performance"
-            for itype, keywords in type_keywords.items():
-                if any(kw in line_lower for kw in keywords):
-                    insight_type = itype
-                    break
-
-            # Clean up the line for display
-            detail = re.sub(r'^[-*\d.)\s]+', '', line).strip()
-            if len(detail) > 10 and current_drone and len(insights) < 3:
-                insights.append({
-                    "type": insight_type,
-                    "severity": severity,
-                    "drone_id": current_drone or "fleet",
-                    "title": f"{insight_type.title()} issue" if len(detail) > 60 else detail[:60],
-                    "detail": detail[:120],
-                })
-
-    status = "critical" if has_critical else ("degraded" if has_warning else "healthy")
-    return {
-        "fleet_status": status,
-        "summary": f"AI analyzed fleet — {len(insights)} issue(s) detected",
-        "insights": insights if insights else [{
-            "type": "performance",
-            "severity": "info",
-            "drone_id": "fleet",
-            "title": "Fleet analyzed",
-            "detail": text[:120].strip(),
-        }],
-    }
-
-
-def _call_edge_ai(prompt: str) -> dict | None:
-    """Call Foundry Local via its OpenAI-compatible /v1/chat/completions API."""
     import urllib.request
     import urllib.error
     import ssl
@@ -670,10 +443,10 @@ def _call_edge_ai(prompt: str) -> dict | None:
         "model": EDGE_AI_MODEL,
         "messages": [
             {"role": "system", "content": _AI_SYSTEM_PROMPT},
-            {"role": "user", "content": f"5G drone fleet readings:\n{prompt}\nReturn ONLY a JSON object with fleet_status, summary, and insights array."},
+            {"role": "user", "content": f"Drone fleet readings:\n{prompt}\nOne sentence summary:"},
         ],
-        "temperature": 0.1,
-        "max_tokens": 450,
+        "temperature": 0.3,
+        "max_tokens": 120,
     }).encode()
 
     headers = {"Content-Type": "application/json"}
@@ -687,50 +460,23 @@ def _call_edge_ai(prompt: str) -> dict | None:
 
     req = urllib.request.Request(url, data=body, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=60, context=ctx) as resp:
+        with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
             result = json.loads(resp.read())
-            # OpenAI-compatible response: choices[0].message.content
             choices = result.get("choices", [])
             if not choices:
                 print("[EdgeAI] No choices in response")
                 return None
             content = choices[0].get("message", {}).get("content", "")
-            # Also check delta field (Foundry Local may return in delta)
             if not content:
                 content = choices[0].get("delta", {}).get("content", "")
-            print(f"[EdgeAI] Raw content ({len(content)} chars): {content[:300]}...")
-            # Strip markdown fences if present
-            content = content.strip()
+            content = content.strip().strip('"').strip("'")
+            # Remove markdown fences if the model wrapped output
             if content.startswith("```"):
-                content = content.split("\n", 1)[1] if "\n" in content else content
+                content = content.split("\n", 1)[-1]
             if content.endswith("```"):
-                content = content[:-3]
-            content = content.strip()
-            if content.startswith("json"):
-                content = content[4:].strip()
-            # Find the first JSON structure (object or array)
-            obj_start = content.find("{")
-            arr_start = content.find("[")
-            if obj_start == -1 and arr_start == -1:
-                # No JSON — parse the prose response into insights
-                print("[EdgeAI] No JSON found, parsing text response")
-                return _parse_text_response(content)
-            # Use whichever comes first
-            if arr_start != -1 and (obj_start == -1 or arr_start < obj_start):
-                start = arr_start
-            else:
-                start = obj_start
-            json_content = content[start:]
-            # Remove trailing markdown fences or other non-JSON text after the structure
-            import re
-            json_content = re.sub(r'\s*```\s*$', '', json_content)
-            json_content = json_content.strip()
-            parsed = _try_parse_json(json_content)
-            if parsed is None:
-                # JSON extraction failed — fallback to text parsing
-                print("[EdgeAI] JSON parse failed, parsing text response instead")
-                return _parse_text_response(content)
-            return _normalize_ai_response(parsed)
+                content = content[:-3].strip()
+            print(f"[EdgeAI] Summary: {content[:200]}")
+            return content if content else None
     except (urllib.error.URLError, Exception) as e:
         print(f"[EdgeAI] Error calling model: {e}")
         return None
@@ -839,36 +585,32 @@ def _start_ai_analyzer():
 
     while not _shutdown.is_set():
         try:
+            # Always use the rule engine for reliable, detailed insights
+            result = _generate_demo_insights()
+            result["last_updated"] = datetime.now(timezone.utc).isoformat()
+
             if EDGE_AI_ENABLED:
+                # Overlay the AI model's natural-language summary
                 snapshot = _build_telemetry_snapshot()
                 if snapshot:
-                    result = _call_edge_ai(snapshot)
-                    if result:
-                        result["last_updated"] = datetime.now(timezone.utc).isoformat()
+                    ai_summary = _call_edge_ai(snapshot)
+                    if ai_summary:
+                        result["summary"] = ai_summary
                         result["status"] = "connected"
                         result["model"] = EDGE_AI_MODEL
                         result["endpoint"] = EDGE_AI_ENDPOINT
-                        ai_insights = result
-                        socketio.emit("ai_insights", ai_insights)
-                        print(f"[EdgeAI] Analysis complete — {result.get('fleet_status', '?')}, {len(result.get('insights', []))} insights")
+                        print(f"[EdgeAI] Analysis complete — {result['fleet_status']}, {len(result.get('insights', []))} insights")
                     else:
-                        # Model call failed — fallback to rules
-                        print("[EdgeAI] Model returned no result, falling back to rule engine")
-                        result = _generate_demo_insights()
-                        result["last_updated"] = datetime.now(timezone.utc).isoformat()
                         result["status"] = "fallback"
                         result["model"] = f"{EDGE_AI_MODEL} (fallback→rules)"
-                        ai_insights = result
-                        socketio.emit("ai_insights", ai_insights)
+                        print("[EdgeAI] Model unavailable, using rule engine only")
             else:
-                # Demo mode — generate insights from rules
-                result = _generate_demo_insights()
-                result["last_updated"] = datetime.now(timezone.utc).isoformat()
                 result["status"] = "demo"
                 result["model"] = "rule-engine (demo)"
                 result["endpoint"] = "local"
-                ai_insights = result
-                socketio.emit("ai_insights", ai_insights)
+
+            ai_insights = result
+            socketio.emit("ai_insights", ai_insights)
         except Exception as e:
             print(f"[EdgeAI] Error: {e}")
             ai_insights["status"] = "error"
@@ -895,6 +637,8 @@ def handle_connect():
     """Send current state to newly connected client."""
     for payload in drone_state.values():
         socketio.emit("telemetry", payload)
+    if ai_insights.get("insights"):
+        socketio.emit("ai_insights", ai_insights)
 
 
 if __name__ == "__main__":
