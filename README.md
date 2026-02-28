@@ -50,7 +50,7 @@ Full observability stack with Prometheus, Grafana, and NVIDIA DCGM Exporter prov
 - **NVIDIA GPU - A2 (Ampere)** — Real-time GPU utilization, VRAM usage (49%), temperature (59°C), and power draw (26.4W) for the NVIDIA A2 GPU running Phi-3 inference
 - **GPU Time Series** — Utilization and memory trends over time, showing inference bursts from the AI analysis cycles
 
-> **Screenshots:** Place your screenshots as `docs/images/drone-dashboard.png` and `docs/images/grafana-dashboard.png`
+
 
 ---
 
