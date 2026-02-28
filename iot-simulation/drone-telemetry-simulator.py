@@ -10,6 +10,7 @@ or from environment variables:
     IOT_HUB_NAME              – IoT Hub hostname (informational)
     DRONE_COUNT                – number of drones (default: 5)
     SEND_INTERVAL_SECONDS      – telemetry interval (default: 5)
+    RESET_INTERVAL_SECONDS     – how often to reset drone stats (default: 7200 = 2 hours)
     DRONE_<n>_CONNECTION_STRING – per-device connection string
 
 Usage:
@@ -41,6 +42,7 @@ if _env_path.exists():
 
 DRONE_COUNT = int(os.getenv("DRONE_COUNT", "5"))
 SEND_INTERVAL = float(os.getenv("SEND_INTERVAL_SECONDS", "5"))
+RESET_INTERVAL = float(os.getenv("RESET_INTERVAL_SECONDS", "7200"))  # default 2 hours
 
 # Barcelona, Spain — Fira Gran Via / MWC venue area
 BCN_CENTER_LAT = 41.3574
@@ -75,6 +77,9 @@ class Drone:
         self.status = "patrolling"
         self.speed_mps = random.uniform(5, 15)  # m/s
 
+        # Reset tracking
+        self._last_reset = time.monotonic()
+
     def connect(self):
         """Create and connect the IoT Hub device client."""
         self.client = IoTHubDeviceClient.create_from_connection_string(
@@ -92,8 +97,23 @@ class Drone:
 
     # ── Physics-lite step ────────────────────────────────────────────────────
 
+    def _reset_stats(self):
+        """Reset drone stats to fresh values so long-running demos stay believable."""
+        self.battery_pct = random.uniform(60, 100)
+        self.altitude_m = random.uniform(50, 150)
+        self.heading_deg = random.uniform(0, 360)
+        self.speed_mps = random.uniform(5, 15)
+        self.status = "patrolling"
+        self._last_reset = time.monotonic()
+        print(f"  [{self.drone_id}] Stats reset (periodic refresh)")
+
     def step(self):
         """Advance the drone state by one tick."""
+        # Periodic stat reset so long-running demos stay believable
+        now = time.monotonic()
+        if now - self._last_reset >= RESET_INTERVAL:
+            self._reset_stats()
+
         # Drift position slightly
         self.lat += random.gauss(0, 0.0005)
         self.lon += random.gauss(0, 0.0005)
@@ -200,7 +220,8 @@ def drone_worker(drone: Drone):
 def main():
     print("=" * 60)
     print("  Drone Telemetry Simulator — MWC 2026 Demo")
-    print(f"  Drones: {DRONE_COUNT}   Interval: {SEND_INTERVAL}s")
+    _reset_display = f"{RESET_INTERVAL / 3600:.1f}h" if RESET_INTERVAL >= 3600 else f"{RESET_INTERVAL}s"
+    print(f"  Drones: {DRONE_COUNT}   Interval: {SEND_INTERVAL}s   Reset every: {_reset_display}")
     print("=" * 60)
     print()
 
