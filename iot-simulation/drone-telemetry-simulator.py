@@ -36,6 +36,17 @@ from pathlib import Path
 from azure.iot.device import IoTHubDeviceClient, Message
 from dotenv import load_dotenv
 
+try:
+    import paho.mqtt.client as mqtt
+    PAHO_AVAILABLE = True
+except ImportError:
+    PAHO_AVAILABLE = False
+
+DATA_MODE = os.getenv("DATA_MODE", "cloud")
+MQTT_BROKER_HOST = os.getenv("MQTT_BROKER_HOST", "aio-broker-insecure.azure-iot-operations.svc")
+MQTT_BROKER_PORT = int(os.getenv("MQTT_BROKER_PORT", "1883"))
+MQTT_TOPIC_PREFIX = os.getenv("MQTT_TOPIC_PREFIX", "drone/telemetry")
+
 # ── Configuration ────────────────────────────────────────────────────────────
 
 # Load .env from the same directory as this script
