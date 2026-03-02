@@ -341,14 +341,76 @@ def drone_worker(drone: Drone):
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
+def _run_edge_mode():
+    """MQTT edge mode: publish drone telemetry directly to AIO broker."""
+    if not PAHO_AVAILABLE:
+        print("ERROR: paho-mqtt not installed. Run: pip install 'paho-mqtt>=2.0.0'", file=sys.stderr)
+        sys.exit(1)
+
+    import paho.mqtt.client as mqtt
+
+    print(f"[Edge] DATA_MODE=edge — publishing to mqtt://{MQTT_BROKER_HOST}:{MQTT_BROKER_PORT}/{MQTT_TOPIC_PREFIX}/#")
+
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="drone-simulator")
+    try:
+        client.connect(MQTT_BROKER_HOST, MQTT_BROKER_PORT, keepalive=60)
+    except Exception as e:
+        print(f"[Edge] Failed to connect to MQTT broker at {MQTT_BROKER_HOST}:{MQTT_BROKER_PORT}: {e}", file=sys.stderr)
+        sys.exit(1)
+    client.loop_start()
+
+    drones = [Drone(drone_id=i, connection_string="") for i in range(1, DRONE_COUNT + 1)]
+    print(f"\nStarting {len(drones)} drone(s) in edge mode... Press Ctrl+C to stop.\n")
+    for d in drones:
+        print(f"  [{d.drone_id}] Initialised — battery {d.battery_pct:.0f}%")
+
+    try:
+        while not _shutdown.is_set():
+            for drone in drones:
+                try:
+                    payload = drone.build_telemetry()
+                    topic = f"{MQTT_TOPIC_PREFIX}/{drone.drone_id}"
+                    client.publish(topic, json.dumps(payload), qos=1)
+                    net = payload["network"]
+                    print(
+                        f"  [{drone.drone_id}] "
+                        f"lat={payload['location']['latitude']:.4f} "
+                        f"lon={payload['location']['longitude']:.4f} "
+                        f"rsrp={net['signal_rsrp_dbm']}dBm "
+                        f"dl={net['downlink_mbps']}Mbps "
+                        f"bat={payload['battery_pct']:.0f}% "
+                        f"[{payload['status']}]"
+                    )
+                except Exception as e:
+                    print(f"  [{drone.drone_id}] Publish error: {e}", file=sys.stderr)
+            _shutdown.wait(SEND_INTERVAL)
+    finally:
+        client.loop_stop()
+        client.disconnect()
+
+
 def main():
     print("=" * 60)
     print("  Drone Telemetry Simulator — MWC 2026 Demo")
     print(f"  Drones: {DRONE_COUNT}   Interval: {SEND_INTERVAL}s   Return at: {BATTERY_RETURN}% battery")
+    print(f"  Mode  : {DATA_MODE}")
     print("=" * 60)
     print()
 
-    # Build drone list
+    # Graceful shutdown
+    def _signal_handler(sig, frame):
+        print("\n\n🛑 Shutting down...")
+        _shutdown.set()
+
+    signal.signal(signal.SIGINT, _signal_handler)
+    signal.signal(signal.SIGTERM, _signal_handler)
+
+    if DATA_MODE == "edge":
+        _run_edge_mode()
+        print("All drones stopped. Goodbye.")
+        return
+
+    # Build drone list for cloud / IoT Hub mode
     drones: list[Drone] = []
     for i in range(1, DRONE_COUNT + 1):
         conn_str = os.getenv(f"DRONE_{i}_CONNECTION_STRING", "")
@@ -362,14 +424,6 @@ def main():
         sys.exit(1)
 
     print(f"\nStarting {len(drones)} drone(s)... Press Ctrl+C to stop.\n")
-
-    # Graceful shutdown
-    def _signal_handler(sig, frame):
-        print("\n\n🛑 Shutting down...")
-        _shutdown.set()
-
-    signal.signal(signal.SIGINT, _signal_handler)
-    signal.signal(signal.SIGTERM, _signal_handler)
 
     # Launch threads
     threads: list[threading.Thread] = []
