@@ -1,0 +1,86 @@
+# IoT Operations Dataflow - Selective Cloud Export
+---
+apiVersion: connectivity.iotoperations.azure.com/v1
+kind: DataflowEndpoint
+metadata:
+  name: local-mqtt-source
+  namespace: azure-iot-operations
+spec:
+  endpointType: Mqtt
+  mqttSettings:
+    host: "aio-broker-insecure.azure-iot-operations.svc:1883"
+    protocol: Mqtt
+    tls:
+      mode: Disabled
+---
+apiVersion: connectivity.iotoperations.azure.com/v1
+kind: DataflowEndpoint
+metadata:
+  name: iot-hub-destination
+  namespace: azure-iot-operations
+spec:
+  endpointType: Mqtt
+  mqttSettings:
+    host: "${IOT_HUB_HOSTNAME}:8883"
+    protocol: Mqtt
+    tls:
+      mode: Enabled
+    authentication:
+      method: SystemAssignedManagedIdentity
+      systemAssignedManagedIdentitySettings:
+        audience: "https://iothubs.azure.net"
+---
+apiVersion: connectivity.iotoperations.azure.com/v1
+kind: Dataflow
+metadata:
+  name: drone-sovereign-export
+  namespace: azure-iot-operations
+spec:
+  profileRef: default
+  mode: Enabled
+  operations:
+    - operationType: Source
+      sourceSettings:
+        endpointRef: local-mqtt-source
+        dataSources:
+          - "drone/telemetry/#"
+    - operationType: BuiltInTransformation
+      builtInTransformationSettings:
+        datasets: []
+        map:
+          - inputs:
+              - "drone_id"
+            output: "drone_id"
+          - inputs:
+              - "network.rsrp"
+            output: "rsrp_dbm"
+          - inputs:
+              - "network.sinr"
+            output: "sinr_db"
+          - inputs:
+              - "network.dl_throughput"
+            output: "dl_mbps"
+          - inputs:
+              - "network.latency"
+            output: "latency_ms"
+          - inputs:
+              - "network.packet_loss"
+            output: "packet_loss_pct"
+          - inputs:
+              - "location.lat"
+            output: "area_lat"
+            expression: "floor(.location.lat * 100) / 100"
+          - inputs:
+              - "location.lon"
+            output: "area_lon"
+            expression: "floor(.location.lon * 100) / 100"
+          - inputs:
+              - "status"
+            output: "status"
+          - inputs:
+              - "timestamp"
+            output: "timestamp"
+    - operationType: Destination
+      destinationSettings:
+        endpointRef: iot-hub-destination
+        dataDestination: "drone-summary"

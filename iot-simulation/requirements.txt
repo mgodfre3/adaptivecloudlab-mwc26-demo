@@ -1,3 +1,5 @@
 # Drone Telemetry Simulator — Python dependencies
 azure-iot-device>=2.13,<3
 python-dotenv>=1.0,<2
+
+paho-mqtt>=2.0.0
