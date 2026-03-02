@@ -41,7 +41,13 @@ for p in _env_candidates:
 
 EVENTHUB_CONN_STR = os.getenv("EVENTHUB_CONNECTION_STRING", "")
 CONSUMER_GROUP = os.getenv("EVENTHUB_CONSUMER_GROUP", "drone-telemetry")
-DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true" or not EVENTHUB_CONN_STR
+DATA_MODE = os.getenv("DATA_MODE", "cloud").lower()
+MQTT_BROKER_HOST = os.getenv("MQTT_BROKER_HOST", "aio-broker-insecure.azure-iot-operations.svc")
+MQTT_BROKER_PORT = int(os.getenv("MQTT_BROKER_PORT", "1883"))
+MQTT_TOPIC_PREFIX = os.getenv("MQTT_TOPIC_PREFIX", "drone/telemetry")
+DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true" or (
+    DATA_MODE != "edge" and not EVENTHUB_CONN_STR
+)
 PORT = int(os.getenv("DASHBOARD_PORT", "5000"))
 DRONE_COUNT = int(os.getenv("DRONE_COUNT", "5"))
 
@@ -78,6 +84,41 @@ def api_state():
 def api_ai_insights():
     """Return latest AI analysis results."""
     return jsonify(ai_insights)
+
+
+# ── MQTT consumer (edge mode) ─────────────────────────────────────────────────
+
+def _start_mqtt_consumer():
+    """Subscribe to AIO MQTT broker and push telemetry to WebSocket."""
+    import paho.mqtt.client as mqtt
+
+    def on_connect(client, userdata, flags, reason_code, properties):
+        if reason_code != 0:
+            print(f"[MQTT] Connection failed with reason code: {reason_code}")
+            return
+        topic = f"{MQTT_TOPIC_PREFIX}/#"
+        client.subscribe(topic, qos=1)
+        print(f"[MQTT] Subscribed to {topic}")
+
+    def on_message(client, userdata, msg):
+        try:
+            payload = json.loads(msg.payload.decode())
+            drone_id = payload.get("drone_id", "unknown")
+            drone_state[drone_id] = payload
+            socketio.emit("telemetry", payload)
+        except Exception as e:
+            print(f"[MQTT] Message error: {e}")
+
+    print(f"[MQTT] Connecting to {MQTT_BROKER_HOST}:{MQTT_BROKER_PORT}...")
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="drone-dashboard")
+    client.on_connect = on_connect
+    client.on_message = on_message
+    try:
+        client.connect(MQTT_BROKER_HOST, MQTT_BROKER_PORT, keepalive=60)
+    except Exception as e:
+        print(f"[MQTT] Failed to connect to broker at {MQTT_BROKER_HOST}:{MQTT_BROKER_PORT}: {e}")
+        return
+    client.loop_forever()
 
 
 # ── Event Hub consumer ───────────────────────────────────────────────────────
@@ -627,7 +668,9 @@ def _start_ai_analyzer():
 # ── Startup ──────────────────────────────────────────────────────────────────
 
 def _start_background():
-    if DEMO_MODE:
+    if DATA_MODE == "edge":
+        t = threading.Thread(target=_start_mqtt_consumer, daemon=True)
+    elif DEMO_MODE:
         t = threading.Thread(target=_start_demo_generator, daemon=True)
     else:
         t = threading.Thread(target=_start_eventhub_consumer, daemon=True)
@@ -648,7 +691,12 @@ def handle_connect():
 
 
 if __name__ == "__main__":
-    mode = "DEMO" if DEMO_MODE else "EVENT HUB"
+    if DATA_MODE == "edge":
+        mode = "MQTT (edge)"
+    elif DEMO_MODE:
+        mode = "DEMO"
+    else:
+        mode = "EVENT HUB"
     ai_mode = "EDGE AI" if EDGE_AI_ENABLED else "DEMO RULES"
     print(f"{'='*60}")
     print(f"  Drone Network Monitoring Dashboard — MWC 2026")

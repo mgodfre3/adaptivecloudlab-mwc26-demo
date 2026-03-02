@@ -46,6 +46,12 @@ data:
   IOT_HUB_NAME: "${IOT_HUB_NAME}"
   SEND_INTERVAL_SECONDS: "5"
 
+  # Data mode — set to "edge" to use AIO MQTT broker, "cloud" for IoT Hub / Event Hub
+  DATA_MODE: "cloud"
+  MQTT_BROKER_HOST: "aio-broker-insecure.azure-iot-operations.svc"
+  MQTT_BROKER_PORT: "1883"
+  MQTT_TOPIC_PREFIX: "drone/telemetry"
+
 ---
 # ── Dashboard Deployment ─────────────────────────────────────────────────────
 apiVersion: apps/v1
