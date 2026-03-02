@@ -2,17 +2,20 @@
 
 **MWC 2026 Demo — Adaptive Cloud Lab**
 
-A live kiosk demo showing autonomous drones monitoring 5G network quality across the Barcelona MWC venue area. Drones patrol waypoints around 12 Barcelona landmarks, return to base when battery is low, and are replaced by fresh drones with new callsigns — creating a continuous, realistic fleet lifecycle. Telemetry flows through Azure IoT Hub, while a small language model (Phi-3 Mini) running on an NVIDIA GPU at the edge provides real-time AI-powered insights — all orchestrated on AKS Arc (Azure Local).
+A live kiosk demo showing autonomous drones monitoring 5G network quality across the Barcelona MWC venue area. Drones patrol waypoints around 12 Barcelona landmarks, return to base when battery is low, and are replaced by fresh drones with new callsigns — creating a continuous, realistic fleet lifecycle. The dashboard supports three telemetry data modes: **demo** (built-in synthetic data), **cloud** (Azure IoT Hub), and **edge** (Azure IoT Operations MQTT broker on-cluster). A small language model (Phi-3 Mini) running on an NVIDIA GPU at the edge provides real-time AI-powered insights — all orchestrated on AKS Arc (Azure Local).
 
 ```mermaid
 graph LR
     Drones["📡 5 Simulated<br/>Drones"]
+    AIO["🔗 Azure IoT Operations<br/>MQTT Broker"]
     IoTHub["☁️ Azure<br/>IoT Hub"]
     Dashboard["🌐 Dashboard<br/>Flask · Socket.IO · Leaflet"]
     Phi3["🧠 Phi-3 Mini<br/>NVIDIA A2 GPU"]
     Browser["👤 Browser<br/>mwc.adaptivecloudlab.com"]
 
-    Drones -->|"Telemetry"| IoTHub -->|"Events"| Dashboard
+    Drones -->|"MQTT (edge mode)"| AIO -->|"Dataflow (selective export)"| IoTHub
+    Drones -->|"AMQP (cloud mode)"| IoTHub -->|"Event Hub consumer"| Dashboard
+    AIO -->|"MQTT (edge mode)"| Dashboard
     Dashboard <-->|"AI Insights"| Phi3
     Browser -->|"HTTPS"| Dashboard
 ```
@@ -67,8 +70,9 @@ Full observability stack with Prometheus, Grafana, and NVIDIA DCGM Exporter prov
 | **Foundry Local Inference Operator** | Private Preview operator that manages SLM lifecycle on GPU nodes |
 | **Phi-3 Mini 4K Instruct** | Microsoft 3.8B-parameter SLM for edge AI inference |
 | **Azure IoT Hub** | Cloud-managed device registry and D2C telemetry ingestion |
+| **Azure IoT Operations (AIO)** | On-cluster MQTT broker (`aio-broker`) for edge-mode telemetry; AIO Dataflow selectively exports anonymized metrics to IoT Hub |
 | **Drone Telemetry Simulator** | Python script simulating autonomous drones with waypoint patrols, battery return-to-base, and fleet cycling |
-| **Live Dashboard** | Flask + Socket.IO + Leaflet.js real-time kiosk UI with rule-engine insights and Phi-3 AI summary |
+| **Live Dashboard** | Flask + Socket.IO + Leaflet.js real-time kiosk UI with rule-engine insights and Phi-3 AI summary; supports demo / cloud / edge data modes |
 
 ---
 
@@ -333,6 +337,8 @@ adaptivecloudlab-mwc26-demo/
 │   └── 05-deploy-monitoring.ps1        # Prometheus, Grafana, DCGM GPU exporter
 ├── k8s/
 │   ├── foundry-local.yaml             # Foundry Local Model + ModelDeployment CRDs
+│   ├── edge-ai.yaml                    # Ollama deployment (alternative GPU inference)
+│   ├── iot-ops-dataflow.yaml           # AIO Dataflow for selective cloud export (data sovereignty)
 │   ├── drone-demo.yaml.template       # Dashboard + Simulator K8s template (rendered at deploy time)
 │   ├── drone-demo-secrets.yaml         # Secrets template (gitignored)
 │   ├── metallb-config.yaml            # MetalLB IP pool + L2 advertisement
@@ -371,8 +377,9 @@ adaptivecloudlab-mwc26-demo/
 | **Edge AI Insights** | Rule-engine generates instant insights (signal degradation, battery alerts, coverage gaps); Phi-3 Mini overlays a one-sentence fleet health summary — no JSON parsing, fully reliable |
 | **Fleet status badges** | Color-coded per-drone status: `PATROLLING` (green), `RETURNING` (yellow), `LAUNCHING` (blue), `CHARGING` (cyan), `LANDING` (orange), `EMERGENCY` (red) |
 | **Aggregate statistics** | Bottom bar with fleet-wide averages: RSRP, DL throughput, latency, active drone count, and messages/sec |
-| **Health indicators** | Top-right badges: WebSocket connection status, AI model health, live clock |
-| **Demo mode** | Runs entirely with synthetic data when `DEMO_MODE=true` — no IoT Hub connection needed |
+| **Health indicators** | Top-right badges: WebSocket connection status (`CONNECTED`/`DISCONNECTED`), AI fleet health (`AI HEALTHY`/`AI DEGRADED`/`AI CRITICAL`), data mode (`LIVE`/`DEMO`), and live clock |
+| **Demo mode** | Runs entirely with synthetic data when `DEMO_MODE=true` or `DATA_MODE` is unset — no IoT Hub connection needed |
+| **Three data modes** | `demo` — built-in synthetic data; `cloud` — IoT Hub Event Hub consumer; `edge` — Azure IoT Operations MQTT broker (switch via `DATA_MODE` env var) |
 
 ### Drone Lifecycle
 
@@ -393,6 +400,71 @@ The Edge AI analysis uses a two-layer approach for reliability:
 2. **Phi-3 Summary** (async) — The Edge AI model generates a one-sentence natural-language fleet health summary that overlays the rule-engine insights
 
 Insights are emitted immediately via WebSocket with a 15-second polling fallback at `/api/ai-insights`.
+
+---
+
+## Data Modes
+
+The dashboard supports three telemetry data modes, selectable via the `DATA_MODE` environment variable:
+
+| Mode | `DATA_MODE` | Description |
+|---|---|---|
+| **Demo** | `demo` (or unset when `EVENTHUB_CONNECTION_STRING` is empty) | Built-in synthetic data generator — 5 drones simulated in-process, no external services needed. Ideal for quick local testing. If `DATA_MODE` is not set and no `EVENTHUB_CONNECTION_STRING` is provided, the dashboard automatically falls back to demo mode. |
+| **Cloud** | `cloud` | Reads live telemetry from **Azure IoT Hub**'s built-in Event Hub endpoint. Requires `EVENTHUB_CONNECTION_STRING` and `EVENTHUB_CONSUMER_GROUP`. |
+| **Edge** | `edge` | Subscribes to the **Azure IoT Operations (AIO) MQTT broker** running on-cluster. Requires `MQTT_BROKER_HOST` and `MQTT_TOPIC_PREFIX`. Telemetry stays on-premises; only anonymized metrics are exported to IoT Hub via AIO Dataflow. |
+
+The active mode is shown in the top-right **LIVE** / **DEMO** badge of the dashboard.
+
+### Switching modes
+
+```env
+# dashboard/.env
+
+# Demo mode (no infrastructure required)
+DATA_MODE=demo
+
+# Cloud mode (IoT Hub)
+DATA_MODE=cloud
+EVENTHUB_CONNECTION_STRING=Endpoint=sb://...
+
+# Edge mode (Azure IoT Operations MQTT)
+DATA_MODE=edge
+MQTT_BROKER_HOST=aio-broker-insecure.azure-iot-operations.svc
+MQTT_BROKER_PORT=1883
+MQTT_TOPIC_PREFIX=drone/telemetry
+```
+
+---
+
+## Azure IoT Operations Integration
+
+In **edge mode** (`DATA_MODE=edge`), the dashboard connects directly to the **Azure IoT Operations MQTT broker** (`aio-broker`) running on the cluster. This keeps all raw telemetry on-premises — no data leaves the edge until explicitly exported.
+
+### Selective Cloud Export (Data Sovereignty)
+
+The file `k8s/iot-ops-dataflow.yaml` defines an **AIO Dataflow** that selectively exports anonymized metrics to IoT Hub:
+
+- **Source** — AIO local MQTT broker on topic `drone/telemetry/#`
+- **Transformation** — Maps only key network metrics (RSRP, SINR, DL throughput, latency, packet loss); GPS coordinates are rounded to area-level precision (~1.1 km radius, `floor(lat × 100) / 100`) to prevent exact location exposure
+- **Destination** — IoT Hub topic `drone-summary` via managed identity (no stored credentials)
+
+This means exact drone positions and full sensor payloads remain on the Azure Local cluster, while only the network quality summary is forwarded to the cloud.
+
+```mermaid
+graph LR
+    Sim["📡 Drone Simulator\nMQTT publish"] -->|"drone/telemetry/#"| AIO["🔗 AIO MQTT Broker\naio-broker:1883"]
+    AIO -->|"WebSocket\n(edge mode)"| Dash["🌐 Dashboard"]
+    AIO -->|"AIO Dataflow\n(selective export)"| IoTHub["☁️ IoT Hub\ndrone-summary topic"]
+```
+
+### Deploy the AIO Dataflow
+
+```powershell
+# Ensure AIO is installed (handled by 02-install-platform.ps1)
+# Replace <your-hub> with your actual IoT Hub hostname (e.g. pdx-iothub.azure-devices.net)
+$iotHubHost = "<your-hub>.azure-devices.net"
+(Get-Content k8s/iot-ops-dataflow.yaml) -replace '\$\{IOT_HUB_HOSTNAME\}',$iotHubHost | kubectl apply -f -
+```
 
 ---
 
@@ -488,6 +560,7 @@ Primary configuration file. All resource names are auto-derived from `PREFIX`. K
 | Variable | Description | Default |
 |---|---|---|
 | `DEMO_MODE` | Use synthetic data (no IoT Hub) | `true` |
+| `DATA_MODE` | Telemetry source: `demo`, `cloud` (IoT Hub), or `edge` (AIO MQTT) | `cloud` |
 | `EDGE_AI_ENABLED` | Enable Foundry Local AI insights | `true` |
 | `EDGE_AI_ENDPOINT` | Foundry Local API URL | `https://localhost:8443` (via `kubectl port-forward`) |
 | `EDGE_AI_MODEL` | Model name for inference | `Phi-3-mini-4k-instruct-cuda-gpu:1` |
@@ -495,6 +568,9 @@ Primary configuration file. All resource names are auto-derived from `PREFIX`. K
 | `EDGE_AI_INTERVAL` | Seconds between AI analysis cycles | `15` |
 | `DRONE_COUNT` | Number of drones in demo mode | `5` |
 | `DASHBOARD_PORT` | HTTP port | `5000` |
+| `MQTT_BROKER_HOST` | AIO MQTT broker host (edge mode only) | `aio-broker-insecure.azure-iot-operations.svc` |
+| `MQTT_BROKER_PORT` | AIO MQTT broker port (edge mode only) | `1883` |
+| `MQTT_TOPIC_PREFIX` | MQTT topic prefix for drone telemetry (edge mode only) | `drone/telemetry` |
 
 ---
 
@@ -574,6 +650,8 @@ Prometheus ──scrape──> node-exporter (all 6 nodes)
 | Model catalog alias not found | Use `phi-3-mini-4k` (not `phi-3-mini-4k-instruct`) |
 | AI insights missing | Check that `simple-websocket` is installed (required for WebSocket transport); the dashboard also has a 15-second polling fallback at `/api/ai-insights` |
 | Dashboard shows no data | Check `DEMO_MODE=true` in `.env` and that the port-forward is running |
+| Edge mode shows no data | Verify `DATA_MODE=edge` and that the AIO MQTT broker is reachable at `MQTT_BROKER_HOST:MQTT_BROKER_PORT`; check dashboard logs for `[MQTT] Connection failed` |
+| AIO Dataflow not exporting to IoT Hub | Confirm managed identity has `IoT Hub Data Contributor` role on the hub; check AIO Dataflow status with `kubectl get dataflow -n azure-iot-operations` |
 
 ---
 
