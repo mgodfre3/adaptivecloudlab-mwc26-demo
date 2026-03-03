@@ -86,6 +86,17 @@ def api_ai_insights():
     return jsonify(ai_insights)
 
 
+@app.route("/api/reset", methods=["POST"])
+def api_reset():
+    """Retire all active drones and reset the fleet."""
+    ids = list(drone_state.keys())
+    drone_state.clear()
+    for drone_id in ids:
+        socketio.emit("drone_retired", {"drone_id": drone_id})
+    socketio.emit("fleet_reset")
+    return jsonify({"status": "reset", "drones_cleared": len(ids)})
+
+
 # ── MQTT consumer (edge mode) ─────────────────────────────────────────────────
 
 def _start_mqtt_consumer():

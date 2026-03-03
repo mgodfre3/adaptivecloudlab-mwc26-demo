@@ -69,6 +69,12 @@
   const aggLat      = document.getElementById("agg-lat");
   const aggActive   = document.getElementById("agg-active");
   const aggMps      = document.getElementById("agg-mps");
+  const resetBtn    = document.getElementById("reset-btn");
+
+  // ── Reset button ─────────────────────────────────────────────────────
+  resetBtn.addEventListener("click", () => {
+    fetch("/api/reset", { method: "POST" }).catch(err => console.error("Reset failed:", err));
+  });
 
   // ── Message counter ──────────────────────────────────────────────────
   let msgCount = 0;
@@ -114,6 +120,17 @@
       card.classList.add("card-fade-out");
       setTimeout(() => card.remove(), 600);
     }
+    updateAggregates();
+  });
+
+  // ── Fleet reset (all drones cleared server-side) ───────────────────────
+  socket.on("fleet_reset", () => {
+    Object.values(drones).forEach(d => {
+      if (d.marker) map.removeLayer(d.marker);
+      if (d.trailLine) map.removeLayer(d.trailLine);
+    });
+    Object.keys(drones).forEach(k => delete drones[k]);
+    cardsEl.innerHTML = "";
     updateAggregates();
   });
 
