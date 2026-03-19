@@ -104,8 +104,6 @@ spec:
             periodSeconds: 30
       imagePullSecrets:
         - name: acr-pull-secret
-      nodeSelector:
-        msft.microsoft/nodepool-name: ${NODE_POOL_LABEL}
 
 ---
 # ── Dashboard Service ────────────────────────────────────────────────────────
@@ -162,8 +160,6 @@ spec:
               memory: 128Mi
       imagePullSecrets:
         - name: acr-pull-secret
-      nodeSelector:
-        msft.microsoft/nodepool-name: ${NODE_POOL_LABEL}
 
 ---
 # ── Self-Signed ClusterIssuer (for TLS) ──────────────────────────────────────
@@ -218,6 +214,36 @@ spec:
   rules:
     - host: ${INGRESS_HOSTNAME}
       http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: dashboard
+                port:
+                  number: 80
+
+---
+# ── Catch-all Ingress (direct IP access without DNS/hosts file) ──────────────
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: dashboard-catchall
+  namespace: drone-demo
+  labels:
+    app: dashboard
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$remote_addr"
+spec:
+  ingressClassName: nginx
+  tls:
+    - secretName: drone-demo-tls
+  rules:
+    - http:
         paths:
           - path: /
             pathType: Prefix

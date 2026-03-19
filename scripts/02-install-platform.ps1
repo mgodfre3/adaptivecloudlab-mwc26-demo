@@ -119,11 +119,15 @@ $foundryModelNs  = if ($envVars["FOUNDRY_MODEL_NAMESPACE"])    { $envVars["FOUND
 $ingressCtrl     = $envVars["INGRESS_CONTROLLER"]
 $ingressNs       = "$prefix-ingress"
 
+# MetalLB
+$metallbIpRange  = if ($envVars["METALLB_IP_RANGE"]) { $envVars["METALLB_IP_RANGE"] } else { "" }
+
 # Versions
 $certManagerVersion = "v1.19.2"
 $trustManagerVersion = "v0.20.3"
 $foundryChartUri    = "oci://mcr.microsoft.com/foundrylocalonazurelocal/helmcharts/helm/inferenceoperator"
 $foundryChartVer    = "0.0.1-prp.5"
+$foundryLocalChart  = Join-Path (Split-Path $PSScriptRoot) "inference-operator-$foundryChartVer.tgz"
 
 # ── Display plan ─────────────────────────────────────────────────────────────
 Write-Host ""
@@ -192,6 +196,44 @@ if (-not $SkipIngress) {
         } else {
             Write-Host "  ✅ NGINX Ingress Controller installed" -ForegroundColor Green
         }
+    }
+
+    # ── Step 1b: MetalLB IP Pool (arcnetworking extension deploys MetalLB in kube-system)
+    if ($metallbIpRange) {
+        $poolExists = kubectl get ipaddresspool service-pool -n kube-system -o name 2>$null
+        if ($poolExists) {
+            Write-Host "  ✅ MetalLB IP pool 'service-pool' already exists" -ForegroundColor Green
+        } else {
+            $metallbCrdExists = kubectl get crd ipaddresspools.metallb.io -o name 2>$null
+            if ($metallbCrdExists) {
+                Write-Host "  📦 Applying MetalLB IP pool ($metallbIpRange)..." -ForegroundColor Yellow
+@"
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: service-pool
+  namespace: kube-system
+spec:
+  addresses:
+    - $metallbIpRange
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: service-l2
+  namespace: kube-system
+spec:
+  ipAddressPools:
+    - service-pool
+"@ | kubectl apply -f - 2>&1
+                Write-Host "  ✅ MetalLB IP pool and L2 advertisement configured" -ForegroundColor Green
+            } else {
+                Write-Host "  ⚠️  MetalLB CRDs not found. Install the arcnetworking k8s-extension first." -ForegroundColor Yellow
+                Write-Host "      az k8s-extension create --name arcnetworking --cluster-name $clusterName -g $rgName --cluster-type connectedClusters --extension-type microsoft.arc.networking" -ForegroundColor DarkGray
+            }
+        }
+    } else {
+        Write-Host "  ⏭️  METALLB_IP_RANGE not set — skipping MetalLB config" -ForegroundColor DarkGray
     }
 } else {
     Write-Host "⏭️  Skipping NGINX Ingress (--SkipIngress)" -ForegroundColor DarkGray
@@ -315,8 +357,9 @@ if (-not $SkipFoundry) {
         $foundryKeyName = if ($envVars["FOUNDRY_API_KEY_NAME"]) { $envVars["FOUNDRY_API_KEY_NAME"] } else { "$prefix-foundry-key" }
         $foundryApiKey = & $azCmd keyvault secret show --vault-name $kvName --name $foundryKeyName --query value -o tsv 2>$null
 
-        Write-Host "  📦 Installing Foundry Local operator from OCI chart..." -ForegroundColor Yellow
-        Write-Host "      Chart: $foundryChartUri" -ForegroundColor DarkGray
+        Write-Host "  📦 Installing Foundry Local operator..." -ForegroundColor Yellow
+        Write-Host "      OCI Chart: $foundryChartUri" -ForegroundColor DarkGray
+        Write-Host "      Local fallback: $foundryLocalChart" -ForegroundColor DarkGray
         Write-Host "      Version: $foundryChartVer" -ForegroundColor DarkGray
 
         $helmArgs = @(
@@ -324,7 +367,7 @@ if (-not $SkipFoundry) {
             $foundryChartUri,
             "--namespace", $foundryOpNs,
             "--version", $foundryChartVer,
-            "--wait", "--timeout", "10m"
+            "--wait", "--timeout", "15m"
         )
 
         # Pass Foundry API key if available
@@ -335,9 +378,44 @@ if (-not $SkipFoundry) {
         helm @helmArgs 2>&1
 
         if ($LASTEXITCODE -ne 0) {
-            Write-Warning "⚠️  Foundry operator install returned non-zero exit code. Check 'helm status inferenceoperator -n $foundryOpNs'."
+            Write-Host "  ⚠️  OCI chart failed — trying local chart fallback..." -ForegroundColor Yellow
+            if (Test-Path $foundryLocalChart) {
+                $helmArgs[2] = $foundryLocalChart
+                $helmArgs = $helmArgs | Where-Object { $_ -ne "--version" -and $_ -ne $foundryChartVer }
+                helm @helmArgs 2>&1
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Warning "⚠️  Foundry operator install failed from local chart too."
+                } else {
+                    Write-Host "  ✅ Foundry Local operator installed from local chart" -ForegroundColor Green
+                }
+            } else {
+                Write-Warning "⚠️  Local chart not found at $foundryLocalChart. Skipping Foundry operator."
+            }
         } else {
-            Write-Host "  ✅ Foundry Local operator installed in ns/$foundryOpNs" -ForegroundColor Green
+            Write-Host "  ✅ Foundry Local operator installed from OCI chart" -ForegroundColor Green
+        }
+
+        # ── Create CA bundle for Foundry operator telemetry ──
+        # The operator pods mount a secret/configmap named ${foundryOpNs}-ca-bundle
+        # containing the root CA cert. Without this, pods stay in ContainerCreating.
+        Write-Host "  📦 Creating CA bundle for Foundry operator..." -ForegroundColor Yellow
+        $caSecretName = "$foundryOpNs-root-ca-key-pair"
+        $caCert = kubectl get secret $caSecretName -n cert-manager -o jsonpath='{.data.ca\.crt}' 2>$null
+        if (-not $caCert) {
+            $caCert = kubectl get secret $caSecretName -n cert-manager -o jsonpath='{.data.tls\.crt}' 2>$null
+        }
+        if ($caCert) {
+            $caCertDecoded = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($caCert))
+            $bundleName = "$foundryOpNs-ca-bundle"
+            kubectl create secret generic $bundleName -n $foundryOpNs `
+                --from-literal="ca.crt=$caCertDecoded" --from-literal="ca-bundle.crt=$caCertDecoded" `
+                --dry-run=client -o yaml | kubectl apply -f - 2>&1
+            kubectl create configmap $bundleName -n $foundryOpNs `
+                --from-literal="ca.crt=$caCertDecoded" --from-literal="ca-bundle.crt=$caCertDecoded" `
+                --dry-run=client -o yaml | kubectl apply -f - 2>&1
+            Write-Host "  ✅ CA bundle '$bundleName' created" -ForegroundColor Green
+        } else {
+            Write-Host "  ⚠️  Could not find Foundry root CA cert — pods may need manual CA bundle creation" -ForegroundColor Yellow
         }
     }
 } else {
@@ -511,12 +589,31 @@ spec:
         Write-Host "      Schema Registry: $schemaRegistry" -ForegroundColor DarkGray
         Write-Host "      DR Namespace:    $drNamespace" -ForegroundColor DarkGray
         Write-Host "      Trust Bundle:    iot-ops-trust-bundle (trust-bundle.pem)" -ForegroundColor DarkGray
-        Write-Host ""
-        Write-Host "  ⚠️  NOTE: In 'southcentralus' the IoT Ops extension requires the 'preview' release train." -ForegroundColor Yellow
-        Write-Host "      If this fails, patch the az CLI extension template.py:" -ForegroundColor Yellow
-        Write-Host "      `$env:AZURE_EXTENSION_DIR\azure-iot-ops\azext_edge\edge\providers\orchestration\template.py" -ForegroundColor DarkGray
-        Write-Host "      Change TRAINS.iotOperations: 'stable' -> 'preview', remove version pinning, set autoUpgradeMinorVersion: True" -ForegroundColor DarkGray
-        Write-Host ""
+
+        # ── Auto-patch IoT Ops release train for regions that lack 'stable' ──
+        # In some regions (e.g. southcentralus), the IoT Ops extension only supports
+        # 'preview', not 'stable'. Auto-detect and patch template.py if needed.
+        $templatePy = Get-ChildItem -Path $env:AZURE_EXTENSION_DIR -Recurse -Filter "template.py" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "orchestration" } | Select-Object -First 1
+        if ($templatePy) {
+            $tpContent = Get-Content $templatePy.FullName -Raw
+            $needsPatch = $tpContent -match '"TRAINS":\s*\{"iotOperations":\s*"stable"\}'
+            if ($needsPatch) {
+                Write-Host "  🔧 Patching IoT Ops template.py: stable → preview train, autoUpgrade enabled..." -ForegroundColor Yellow
+                # Change train to preview
+                $tpContent = $tpContent -replace '"TRAINS":\s*\{"iotOperations":\s*"stable"\}', '"TRAINS":        {"iotOperations": "preview"}'
+                # Remove version line for iotoperations extension (autoUpgrade=True requires no version)
+                $tpContent = $tpContent -replace '(\s*"extensionType": "microsoft\.iotoperations",)\s*\n\s*"version": "[^"]+",', "`$1"
+                # Enable autoUpgradeMinorVersion for iotoperations
+                $tpContent = $tpContent -replace '("extensionType": "microsoft\.iotoperations",\s*"releaseTrain": "[^"]+",\s*"autoUpgradeMinorVersion":\s*)False', '$1True'
+                Set-Content $templatePy.FullName -Value $tpContent -NoNewline
+                Write-Host "  ✅ template.py patched (preview train, auto-upgrade)" -ForegroundColor Green
+            } else {
+                Write-Host "  ✅ template.py already uses preview train or custom config" -ForegroundColor Green
+            }
+        } else {
+            Write-Host "  ⚠️  Could not find template.py — if 'stable' train fails, patch manually" -ForegroundColor Yellow
+        }
 
         & $azCmd iot ops create `
             --cluster $clusterName `
