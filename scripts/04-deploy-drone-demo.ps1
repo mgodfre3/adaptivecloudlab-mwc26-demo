@@ -73,8 +73,12 @@ Write-Host "  Rendered k8s/drone-demo.yaml"
 
 # ── Step 1: ACR Login ────────────────────────────────────────────────────────
 if (-not $SkipBuild) {
-    Write-Host "`n[1/5] Logging into ACR..." -ForegroundColor Yellow
-    az.cmd acr login --name $AcrName 2>&1
+    # Extract the short registry name (strip everything from the first dot onward)
+    # Handles both "myacr.azurecr.io" and "myacr-guid.azurecr.io" formats
+    $AcrRegistryName = ($AcrName -split '\.')[0]
+
+    Write-Host "`n[1/5] Logging into ACR ($AcrRegistryName)..." -ForegroundColor Yellow
+    az.cmd acr login --name $AcrRegistryName 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Host "WARNING: ACR login failed — falling back to az acr build (no local Docker needed)" -ForegroundColor DarkYellow
     }
@@ -82,13 +86,13 @@ if (-not $SkipBuild) {
     # ── Step 2: Build & Push Dashboard ────────────────────────────────────────
     Write-Host "`n[2/5] Building dashboard image via ACR..." -ForegroundColor Yellow
     $dashImg = "drone-demo/dashboard:$Tag"
-    az.cmd acr build --registry ($AcrName -replace '\.azurecr\.io$','') --image $dashImg "$root\dashboard"
+    az.cmd acr build --registry $AcrRegistryName --image $dashImg "$root\dashboard"
     if ($LASTEXITCODE -ne 0) { Write-Host "ERROR: Dashboard build failed" -ForegroundColor Red; exit 1 }
 
     # ── Step 3: Build & Push Simulator ────────────────────────────────────────
     Write-Host "`n[3/5] Building simulator image via ACR..." -ForegroundColor Yellow
     $simImg = "drone-demo/simulator:$Tag"
-    az.cmd acr build --registry ($AcrName -replace '\.azurecr\.io$','') --image $simImg "$root\iot-simulation"
+    az.cmd acr build --registry $AcrRegistryName --image $simImg "$root\iot-simulation"
     if ($LASTEXITCODE -ne 0) { Write-Host "ERROR: Simulator build failed" -ForegroundColor Red; exit 1 }
 } else {
     Write-Host "`n[1-3/5] Skipping build/push (--SkipBuild)" -ForegroundColor DarkGray

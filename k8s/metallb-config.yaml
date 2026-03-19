@@ -1,21 +1,27 @@
 # MetalLB IP Address Pool and L2 Advertisement
-# Assigns 172.21.229.201 as the VIP for LoadBalancer services
+# Provides VIPs for LoadBalancer services (Ingress, MQTT broker, etc.)
+#
+# IMPORTANT: The address range MUST be within the same /26 (or wider) subnet
+# as the Kubernetes node IPs, otherwise L2 ARP announcements work but TCP
+# traffic is routed to the gateway instead of being handled locally.
+#
+# The arcnetworking extension deploys MetalLB into kube-system (not metallb-system).
 ---
 apiVersion: metallb.io/v1beta1
 kind: IPAddressPool
 metadata:
-  name: ingress-pool
-  namespace: metallb-system
+  name: service-pool
+  namespace: kube-system
 spec:
   addresses:
-    - 172.21.229.201/32
+    - ${METALLB_IP_RANGE}
 
 ---
 apiVersion: metallb.io/v1beta1
 kind: L2Advertisement
 metadata:
-  name: ingress-l2
-  namespace: metallb-system
+  name: service-l2
+  namespace: kube-system
 spec:
   ipAddressPools:
-    - ingress-pool
+    - service-pool
