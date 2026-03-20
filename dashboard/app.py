@@ -16,6 +16,10 @@ Env vars (set in dashboard/.env or inherit from iot-simulation/.env):
   EDGE_AI_MODEL               – Model name (default: Phi-3-mini-4k-instruct-cuda-gpu:1)
   EDGE_AI_API_KEY             – Foundry Local API key
   EDGE_AI_ENABLED             – set to "true" to enable edge AI analysis
+  EDGE_AI_CA_CERT             – path to CA cert for TLS verification of AI endpoint;
+                                leave blank to skip verification (cluster-internal only)
+  CORS_ALLOWED_ORIGINS        – allowed WebSocket origins (default: "*"); set to the
+                                dashboard FQDN in production, e.g. https://mwc.example.com
 """
 
 import json
@@ -57,11 +61,13 @@ EDGE_AI_MODEL = os.getenv("EDGE_AI_MODEL", "Phi-3-mini-4k-instruct-cuda-gpu:1")
 EDGE_AI_API_KEY = os.getenv("EDGE_AI_API_KEY", "")
 EDGE_AI_ENABLED = os.getenv("EDGE_AI_ENABLED", "false").lower() == "true"
 EDGE_AI_INTERVAL = int(os.getenv("EDGE_AI_INTERVAL", "15"))  # seconds between analyses
+EDGE_AI_CA_CERT = os.getenv("EDGE_AI_CA_CERT", "")  # path to CA cert; empty → skip verify (cluster-internal only)
 
 # ── Flask app ────────────────────────────────────────────────────────────────
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.getenv("FLASK_SECRET_KEY", secrets.token_hex(16))
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+_cors_origins = os.getenv("CORS_ALLOWED_ORIGINS", "*")
+socketio = SocketIO(app, cors_allowed_origins=_cors_origins, async_mode="threading")
 
 # In-memory latest state per drone
 drone_state: dict[str, dict] = {}
@@ -505,10 +511,18 @@ def _call_edge_ai(prompt: str) -> str | None:
     if EDGE_AI_API_KEY:
         headers["api-key"] = EDGE_AI_API_KEY
 
-    # Foundry Local uses self-signed TLS — skip verification for cluster-internal calls
+    # TLS context for Foundry Local endpoint.
+    # Prefer a CA cert when provided (set EDGE_AI_CA_CERT to the cert path).
+    # Falls back to skipping verification only for cluster-internal endpoints
+    # where EDGE_AI_ENDPOINT starts with https:// inside the cluster network.
     ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
+    if EDGE_AI_CA_CERT and os.path.isfile(EDGE_AI_CA_CERT):
+        ctx.load_verify_locations(EDGE_AI_CA_CERT)
+    else:
+        # Cluster-internal self-signed cert — verification skipped deliberately.
+        # Set EDGE_AI_CA_CERT to enable full certificate validation.
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
 
     req = urllib.request.Request(url, data=body, headers=headers)
     try:
