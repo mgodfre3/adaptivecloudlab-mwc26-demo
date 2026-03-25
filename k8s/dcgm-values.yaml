@@ -5,7 +5,7 @@ serviceMonitor:
     release: kube-prometheus-stack
 
 nodeSelector:
-  msft.microsoft/nodepool-name: pdx-aks-ead6c2bf-pdxgpu
+  msft.microsoft/nodepool-name: pdx-mwc-26-cb393e45-pdxgpu
 
 tolerations:
   - operator: Exists
