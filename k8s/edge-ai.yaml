@@ -1,7 +1,7 @@
 ---
 # ═══════════════════════════════════════════════════════════════════════════════
 # Ollama – Local AI Inference Engine (GPU Node)
-# Deploys Phi-3-mini on the NVIDIA A2 GPU for edge AI inference
+# Deploys Phi-4 Mini on the NVIDIA A2 GPU for edge AI inference
 # Provides OpenAI-compatible API at http://ollama.edge-ai.svc:11434
 # ═══════════════════════════════════════════════════════════════════════════════
 apiVersion: v1
@@ -100,11 +100,11 @@ spec:
       name: http
   type: ClusterIP
 ---
-# Init job – pull Phi-3-mini model after Ollama is ready
+# Init job – pull Phi-4 Mini model after Ollama is ready
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: ollama-pull-phi3
+  name: ollama-pull-phi4
   namespace: edge-ai
 spec:
   backoffLimit: 5
@@ -138,9 +138,9 @@ spec:
             - sh
             - -c
             - |
-              echo "Pulling phi3:mini model..."
+              echo "Pulling phi4:mini model..."
               curl -s http://ollama.edge-ai.svc:11434/api/pull \
-                -d '{"name":"phi3:mini","stream":false}' \
+                -d '{"name":"phi4:mini","stream":false}' \
                 --max-time 600
               echo ""
               echo "Model pull complete. Verifying..."

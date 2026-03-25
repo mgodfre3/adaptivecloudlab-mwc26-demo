@@ -327,7 +327,7 @@
       "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
       "title": "Foundry Local (AI)",
       "type": "stat",
-      "targets": [{ "expr": "kube_deployment_status_replicas_available{namespace=\"foundry-local\",deployment=\"phi-3-deployment\"}", "legendFormat": "", "refId": "A" }]
+      "targets": [{ "expr": "kube_deployment_status_replicas_available{namespace=\"foundry-local\",deployment=\"phi-4-deployment\"}", "legendFormat": "", "refId": "A" }]
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },

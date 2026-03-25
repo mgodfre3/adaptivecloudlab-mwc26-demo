@@ -44,7 +44,7 @@ Physical Servers (Azure Local HCI)
     ├── System Node 2         (moc-lujmurkd13i  172.21.229.197)  ← platform services
     ├── User Node 1           (pdxuser pool)                      ← dashboard + simulator
     ├── User Node 2           (pdxuser pool)                      ← dashboard + simulator
-    └── GPU Node              (pdxgpu pool, NVIDIA A2)            ← Phi-3 AI inference
+    └── GPU Node              (pdxgpu pool, NVIDIA A2)            ← Phi-4 AI inference
 ```
 
 The VMs run inside the Lenovo SE350 hypervisor managed by Azure Local. Azure Arc connects the cluster to Azure for management (RBAC, policy, GitOps) without routing any workload traffic through Azure.
@@ -69,7 +69,7 @@ drone-demo/
 
 foundry-local/
 ├── Foundry Local Inference Operator            — manages SLM lifecycle on GPU
-└── phi-3-deployment (Phi-3 Mini)               — AI inference endpoint :5000
+└── phi-4-deployment (Phi-4 Mini)               — AI inference endpoint :5000
 ```
 
 ### Azure Cloud (South Central US)
@@ -248,11 +248,11 @@ The AI analysis runs on a separate background thread, independent of the telemet
 [Immediate emit — socketio.emit("ai_insights", result)]
         │
         │  3. If EDGE_AI_ENABLED=true:
-        │     POST https://phi-3-deployment.foundry-local.svc:5000/v1/chat/completions
+        │     POST https://phi-4-deployment.foundry-local.svc:5000/v1/chat/completions
         │     Headers: api-key: <foundry-key>
         │     Body: {model, messages, temperature: 0.3, max_tokens: 120}
         ▼
-[Phi-3 Mini — GPU Node]
+[Phi-4 Mini — GPU Node]
         │
         │  4. Response: one-sentence natural-language fleet summary
         │     e.g. "Drone-charlie has weak signal at -108 dBm near Port Olímpic."
@@ -263,7 +263,7 @@ The AI analysis runs on a separate background thread, independent of the telemet
 [Browser — ai_insights panel updated]
 ```
 
-**Key detail:** The rule engine fires *immediately* and updates the UI before waiting for the AI model. The Phi-3 call then overlays a natural-language summary on top of the rule-engine insights. This makes the UI responsive even when the model is under load.
+**Key detail:** The rule engine fires *immediately* and updates the UI before waiting for the AI model. The Phi-4 call then overlays a natural-language summary on top of the rule-engine insights. This makes the UI responsive even when the model is under load.
 
 ---
 
@@ -271,32 +271,32 @@ The AI analysis runs on a separate background thread, independent of the telemet
 
 ### Why "at the Edge"?
 
-All AI inference happens on the GPU node inside the AKS Arc cluster on-premises. The Phi-3 Mini model:
+All AI inference happens on the GPU node inside the AKS Arc cluster on-premises. The Phi-4 Mini model:
 - Is stored on the GPU node's local disk (downloaded once at operator startup)
 - Runs as a container on the GPU node (NVIDIA A2, 16 GB VRAM)
 - Is **never called via the internet** — only via an in-cluster Kubernetes service
 - Has no dependency on Azure OpenAI or any external inference API
 
-The in-cluster service address is `phi-3-deployment.foundry-local.svc:5000`. Traffic never leaves the physical servers.
+The in-cluster service address is `phi-4-deployment.foundry-local.svc:5000`. Traffic never leaves the physical servers.
 
 ### Foundry Local Inference Operator
 
-The **Foundry Local Inference Operator** (Private Preview, v0.0.1-prp.5) is a Kubernetes operator that manages the full lifecycle of the Phi-3 model:
+The **Foundry Local Inference Operator** (Private Preview, v0.0.1-prp.5) is a Kubernetes operator that manages the full lifecycle of the Phi-4 model:
 
 ```
 [Foundry Local Operator — foundry-local-operator namespace]
         │
         │  watches Model + ModelDeployment CRDs
         ▼
-Model CRD (phi-3-mini):
+Model CRD (phi-4-mini):
   source:
     type: catalog
     catalog:
-      alias: "phi-3-mini-4k"
+      alias: "phi-4-mini"
         │
-        │  1. Downloads Phi-3-mini-4k-instruct-cuda-gpu:1 from catalog
+        │  1. Downloads Phi-4-mini-instruct from catalog
         ▼
-ModelDeployment CRD (phi-3-deployment):
+ModelDeployment CRD (phi-4-deployment):
   workloadType: generative
   compute: gpu
   replicas: 1
@@ -308,9 +308,9 @@ ModelDeployment CRD (phi-3-deployment):
         │
         │  2. Schedules inference pod on GPU node
         │  3. Creates ClusterIP service (:5000)
-        │  4. Creates secret: phi-3-deployment-api-keys
+        │  4. Creates secret: phi-4-deployment-api-keys
         ▼
-[phi-3-deployment pod — running on GPU node]
+[phi-4-deployment pod — running on GPU node]
   Exposes: /v1/chat/completions (OpenAI-compatible API)
   Auth:    api-key header (Foundry-issued key)
   TLS:     self-signed cert (managed by cert-manager + trust-manager)
@@ -318,7 +318,7 @@ ModelDeployment CRD (phi-3-deployment):
 
 ### What Data the AI Model Receives
 
-The model receives a compact text prompt — **not raw JSON** — to ensure the small 3.8B-parameter model focuses on analysis rather than echoing data:
+The model receives a compact text prompt — **not raw JSON** — to ensure the small 14B-parameter model focuses on analysis rather than echoing data:
 
 ```
 System:
@@ -348,16 +348,16 @@ The AI analysis pipeline uses two layers to ensure the dashboard always shows us
 | Layer | Technology | Latency | Reliability |
 |---|---|---|---|
 | **Rule Engine** | Deterministic Python logic | < 1 ms | 100% (no network call) |
-| **Phi-3 Summary** | SLM inference on GPU | 1–5 s | Depends on GPU availability |
+| **Phi-4 Summary** | SLM inference on GPU | 1–5 s | Depends on GPU availability |
 
-The rule engine always fires first. If the Phi-3 call fails (model loading, GPU busy, timeout), the dashboard shows rule-engine insights with `status: "fallback"` rather than showing nothing.
+The rule engine always fires first. If the Phi-4 call fails (model loading, GPU busy, timeout), the dashboard shows rule-engine insights with `status: "fallback"` rather than showing nothing.
 
 ### AI Insights Lifecycle (per 15-second cycle)
 
 ```
 t=0s   Rule engine runs → insights emitted to browser immediately
-t=0s   POST to phi-3-deployment (async, 30s timeout)
-t=1–5s Phi-3 responds with one-sentence summary
+t=0s   POST to phi-4-deployment (async, 30s timeout)
+t=1–5s Phi-4 responds with one-sentence summary
 t=1–5s summary field updated → emitted to browser
 t=15s  Next cycle begins
 ```
@@ -377,10 +377,10 @@ This is a key aspect of the "running at the edge" story. Here is exactly where e
 | Data | Where It Lives | Who Reads It |
 |---|---|---|
 | Drone telemetry (demo mode) | `drone_state` dict in dashboard pod memory | Dashboard, AI analyzer |
-| AI inference prompts | Dashboard pod → GPU pod (in-cluster HTTPS) | Phi-3 pod only |
+| AI inference prompts | Dashboard pod → GPU pod (in-cluster HTTPS) | Phi-4 pod only |
 | AI inference responses | GPU pod → Dashboard pod (in-cluster) | Dashboard only |
-| Phi-3 model weights | GPU node local disk (downloaded once) | Phi-3 pod |
-| API keys (Foundry Local) | Kubernetes Secret (`phi-3-deployment-api-keys`) | Dashboard pod only |
+| Phi-4 model weights | GPU node local disk (downloaded once) | Phi-4 pod |
+| API keys (Foundry Local) | Kubernetes Secret (`phi-4-deployment-api-keys`) | Dashboard pod only |
 | Grafana dashboards | `monitoring` namespace, PVC | Internal only |
 
 ### Data That Goes to Azure (IoT Hub Mode Only)
@@ -410,7 +410,7 @@ When running in live mode, Azure IoT Hub stores telemetry messages temporarily (
 
 ### Why AI at the Edge Matters
 
-Running Phi-3 Mini on a local GPU node (rather than calling Azure OpenAI or another cloud API) provides:
+Running Phi-4 Mini on a local GPU node (rather than calling Azure OpenAI or another cloud API) provides:
 
 1. **Latency** — In-cluster HTTP call takes < 5 s. A cloud API call would add network round-trip + potential queuing.
 2. **Data Sovereignty** — Telemetry data used for AI analysis never leaves the physical servers. For real deployments (e.g., telecoms, industrial, healthcare), this is often a compliance requirement.
@@ -420,13 +420,13 @@ Running Phi-3 Mini on a local GPU node (rather than calling Azure OpenAI or anot
 
 ### Edge AI Inference: GPU Utilization
 
-The NVIDIA A2 GPU running Phi-3 Mini:
+The NVIDIA A2 GPU running Phi-4 Mini:
 - **VRAM usage:** ~49% (8 GB of 16 GB) when the model is loaded
 - **GPU utilization:** Spikes during inference, visible in Grafana (DCGM Exporter metrics)
 - **Temperature:** ~59°C at steady state under inference load
 - **Power draw:** ~26.4 W at inference load
 
-This demonstrates that a relatively modest edge GPU can run a capable 3.8B-parameter language model in real time.
+This demonstrates that a relatively modest edge GPU can run a capable 14B-parameter language model in real time.
 
 ### Network Architecture at the Edge
 
@@ -452,11 +452,11 @@ Dashboard Pod (Flask + Socket.IO, port 5000)
     │
     ├──── reads ────> drone_state dict (in-memory or Event Hub)
     │
-    └──── calls ────> phi-3-deployment.foundry-local.svc:5000
+    └──── calls ────> phi-4-deployment.foundry-local.svc:5000
                           │
                           ▼
                       GPU Node (NVIDIA A2)
-                      Phi-3 Mini inference pod
+                      Phi-4 Mini inference pod
 ```
 
 The browser only ever contacts `172.21.229.201` (MetalLB VIP). All service-to-service communication (dashboard ↔ AI model) happens over the Kubernetes cluster network — no traffic leaves the physical servers.
@@ -471,7 +471,7 @@ The browser only ever contacts `172.21.229.201` (MetalLB VIP). All service-to-se
 |---|---|
 | `_start_eventhub_consumer()` | Connects to IoT Hub Event Hub endpoint; updates `drone_state` on each event |
 | `_start_demo_generator()` | Manages synthetic drone fleet; ticks every 3 s; updates `drone_state` |
-| `_start_ai_analyzer()` | Background thread; runs rule engine + optional Phi-3 call every 15 s |
+| `_start_ai_analyzer()` | Background thread; runs rule engine + optional Phi-4 call every 15 s |
 | `_generate_demo_insights()` | Rule engine: deterministic per-drone + fleet-wide analysis |
 | `_build_telemetry_snapshot()` | Converts `drone_state` to compact text for AI prompt |
 | `_call_edge_ai(prompt)` | HTTPS POST to Foundry Local; returns one-sentence summary |
@@ -494,7 +494,7 @@ The browser only ever contacts `172.21.229.201` (MetalLB VIP). All service-to-se
 
 | File | Contents |
 |---|---|
-| `foundry-local.yaml` | `Model` and `ModelDeployment` CRDs for Phi-3 Mini |
+| `foundry-local.yaml` | `Model` and `ModelDeployment` CRDs for Phi-4 Mini |
 | `drone-demo.yaml.template` | Dashboard + Simulator Deployments, Service, Ingress (rendered by deploy script) |
 | `metallb-config.yaml` | MetalLB `IPAddressPool` and `L2Advertisement` for VIP `172.21.229.201` |
 | `monitoring-values.yaml` | Helm values for `kube-prometheus-stack` |
@@ -520,7 +520,7 @@ This demo is a complete edge AI platform in a portable, self-contained form:
 
 - **Two Lenovo SE350 servers** host a full 6-node Kubernetes cluster with GPU acceleration
 - **Azure is used only for IoT Hub, Key Vault, and ACR** — no Azure compute runs any part of the demo
-- **Phi-3 Mini runs entirely on-premises** on the NVIDIA A2 GPU, processing drone telemetry with no data leaving the edge
-- **AI insights are generated locally** using a two-layer approach: a deterministic rule engine for instant feedback and a 3.8B-parameter SLM for natural-language fleet health summaries
+- **Phi-4 Mini runs entirely on-premises** on the NVIDIA A2 GPU, processing drone telemetry with no data leaving the edge
+- **AI insights are generated locally** using a two-layer approach: a deterministic rule engine for instant feedback and a 14B-parameter SLM for natural-language fleet health summaries
 - **The dashboard is self-contained** — in demo mode it generates synthetic telemetry, runs the AI, and serves the UI without any internet connectivity
 - **All service-to-service communication is in-cluster** — the AI model endpoint, telemetry state, and WebSocket server are all within the same Kubernetes cluster network
