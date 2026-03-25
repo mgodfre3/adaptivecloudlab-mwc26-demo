@@ -29,7 +29,7 @@ graph TB
         subgraph GPUPool["GPU Node Pool (pdxgpu) — NVIDIA A2"]
             subgraph FoundryNS["Namespace: foundry-local"]
                 FoundryOp["Foundry Local<br/>Inference Operator<br/><i>v0.0.1-prp.5</i>"]
-                Phi3["🧠 Phi-3 Mini 4K Instruct<br/>3.8B param SLM<br/><i>phi-3-deployment:5000</i>"]
+                Phi3["🧠 Phi-4 Mini Instruct<br/>14B param SLM<br/><i>phi-4-deployment:5000</i>"]
             end
         end
 

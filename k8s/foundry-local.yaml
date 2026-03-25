@@ -2,7 +2,7 @@
 # Foundry Local - Edge AI Inference on AKS Arc (Azure Local)
 # MWC 2026 Demo: Real-Time Drone Network Monitoring with Edge AI
 # =============================================================================
-# Deploys Phi-3 Mini via Foundry Local Inference Operator CRDs.
+# Deploys Phi-4 Mini via Foundry Local Inference Operator CRDs.
 # The operator (installed via Helm) manages the Model and ModelDeployment
 # lifecycle, including model download, GPU scheduling, TLS, and API key auth.
 # =============================================================================
@@ -17,21 +17,21 @@ metadata:
 
 ---
 # =============================================================================
-# Model: Phi-3 Mini 4K Instruct (from Foundry Local catalog)
+# Model: Phi-4 Mini Instruct (from Foundry Local catalog)
 # =============================================================================
 apiVersion: foundrylocal.azure.com/v1
 kind: Model
 metadata:
-  name: phi-3-mini
+  name: phi-4-mini
   namespace: foundry-local
 spec:
-  displayName: "Phi-3 Mini 4K Instruct"
-  description: "Microsoft Phi-3 Mini - compact 3.8B parameter SLM for edge AI inference"
+  displayName: "Phi-4 Mini Instruct"
+  description: "Microsoft Phi-4 Mini - compact 14B parameter SLM for edge AI inference"
   publisher: "Microsoft"
   source:
     type: catalog
     catalog:
-      alias: "phi-3-mini-4k"
+      alias: "phi-4-mini"
 
 ---
 # =============================================================================
@@ -40,12 +40,12 @@ spec:
 apiVersion: foundrylocal.azure.com/v1
 kind: ModelDeployment
 metadata:
-  name: phi-3-deployment
+  name: phi-4-deployment
   namespace: foundry-local
 spec:
-  displayName: "Phi-3 Edge AI Deployment"
+  displayName: "Phi-4 Edge AI Deployment"
   model:
-    ref: phi-3-mini
+    ref: phi-4-mini
   workloadType: generative
   compute: gpu
   replicas: 1

@@ -13,7 +13,7 @@ Env vars (set in dashboard/.env or inherit from iot-simulation/.env):
   DEMO_MODE                   – set to "true" to use synthetic data
   DASHBOARD_PORT              – web server port (default: 5000)
   EDGE_AI_ENDPOINT            – Foundry Local URL (default: https://localhost:8443)
-  EDGE_AI_MODEL               – Model name (default: Phi-3-mini-4k-instruct-cuda-gpu:1)
+  EDGE_AI_MODEL               – Model name (default: Phi-4-mini-instruct)
   EDGE_AI_API_KEY             – Foundry Local API key
   EDGE_AI_ENABLED             – set to "true" to enable edge AI analysis
 """
@@ -53,7 +53,7 @@ DRONE_COUNT = int(os.getenv("DRONE_COUNT", "5"))
 
 # Edge AI (Foundry Local on AKS Arc)
 EDGE_AI_ENDPOINT = os.getenv("EDGE_AI_ENDPOINT", "https://localhost:8443")
-EDGE_AI_MODEL = os.getenv("EDGE_AI_MODEL", "Phi-3-mini-4k-instruct-cuda-gpu:1")
+EDGE_AI_MODEL = os.getenv("EDGE_AI_MODEL", "Phi-4-mini-instruct")
 EDGE_AI_API_KEY = os.getenv("EDGE_AI_API_KEY", "")
 EDGE_AI_ENABLED = os.getenv("EDGE_AI_ENABLED", "false").lower() == "true"
 EDGE_AI_INTERVAL = int(os.getenv("EDGE_AI_INTERVAL", "15"))  # seconds between analyses

@@ -2,7 +2,7 @@
 
 **MWC 2026 Demo — Adaptive Cloud Lab**
 
-A live kiosk demo showing autonomous drones monitoring 5G network quality across the Barcelona MWC venue area. Drones patrol waypoints around 12 Barcelona landmarks, return to base when battery is low, and are replaced by fresh drones with new callsigns — creating a continuous, realistic fleet lifecycle. The dashboard supports three telemetry data modes: **demo** (built-in synthetic data), **cloud** (Azure IoT Hub), and **edge** (Azure IoT Operations MQTT broker on-cluster). A small language model (Phi-3 Mini) running on an NVIDIA GPU at the edge provides real-time AI-powered insights — all orchestrated on AKS Arc (Azure Local).
+A live kiosk demo showing autonomous drones monitoring 5G network quality across the Barcelona MWC venue area. Drones patrol waypoints around 12 Barcelona landmarks, return to base when battery is low, and are replaced by fresh drones with new callsigns — creating a continuous, realistic fleet lifecycle. The dashboard supports three telemetry data modes: **demo** (built-in synthetic data), **cloud** (Azure IoT Hub), and **edge** (Azure IoT Operations MQTT broker on-cluster). A small language model (Phi-4 Mini) running on an NVIDIA GPU at the edge provides real-time AI-powered insights — all orchestrated on AKS Arc (Azure Local).
 
 ```mermaid
 graph LR
@@ -10,7 +10,7 @@ graph LR
     AIO["🔗 Azure IoT Operations<br/>MQTT Broker"]
     IoTHub["☁️ Azure<br/>IoT Hub"]
     Dashboard["🌐 Dashboard<br/>Flask · Socket.IO · Leaflet"]
-    Phi3["🧠 Phi-3 Mini<br/>NVIDIA A2 GPU"]
+    Phi3["🧠 Phi-4 Mini<br/>NVIDIA A2 GPU"]
     Browser["👤 Browser<br/>mwc.adaptivecloudlab.com"]
 
     Drones -->|"MQTT (edge mode)"| AIO -->|"Dataflow (selective export)"| IoTHub
@@ -32,7 +32,7 @@ graph LR
 
 ### Drone Network Monitor Dashboard
 
-Real-time kiosk UI showing 5 autonomous drones over Barcelona with live 5G telemetry and Edge AI insights powered by Phi-3 Mini running on an NVIDIA A2 GPU.
+Real-time kiosk UI showing 5 autonomous drones over Barcelona with live 5G telemetry and Edge AI insights powered by Phi-4 Mini running on an NVIDIA A2 GPU.
 
 ![Drone Network Monitor Dashboard](docs/images/drone-dashboard.png)
 
@@ -40,7 +40,7 @@ Real-time kiosk UI showing 5 autonomous drones over Barcelona with live 5G telem
 - **Left panel** — Dark-themed Leaflet map with live drone positions, flight trails, and color-coded signal indicators (green = strong, yellow = moderate, red = weak)
 - **Right panel** — Per-drone telemetry cards showing RSRP, SINR, DL/UL throughput, latency, packet loss, altitude, speed, and battery level
 - **Top-right** — Real-time connection status (`CONNECTED`), AI health indicator (`AI HEALTHY`), and live clock
-- **Edge AI Analysis** — Rule-engine generates instant insights (signal degradation, battery alerts, coverage gaps) while Phi-3 Mini overlays a fleet health summary
+- **Edge AI Analysis** — Rule-engine generates instant insights (signal degradation, battery alerts, coverage gaps) while Phi-4 Mini overlays a fleet health summary
 - **Drone lifecycle** — Drones patrol waypoints, return to base at low battery, charge, and are replaced by new drones with NATO callsigns (Alpha → Zulu)
 - **Bottom bar** — Fleet-wide aggregates: average RSRP, average DL throughput, average latency, active drone count, and messages/sec throughput
 
@@ -53,7 +53,7 @@ Full observability stack with Prometheus, Grafana, and NVIDIA DCGM Exporter prov
 **What you're seeing:**
 - **Cluster Overview** — 6 nodes healthy, 203 pods running, 19% CPU / 23% memory utilization across the cluster
 - **Node CPU & Memory** — Per-node time series showing resource consumption across all 6 Kubernetes nodes
-- **NVIDIA GPU - A2 (Ampere)** — Real-time GPU utilization, VRAM usage (49%), temperature (59°C), and power draw (26.4W) for the NVIDIA A2 GPU running Phi-3 inference
+- **NVIDIA GPU - A2 (Ampere)** — Real-time GPU utilization, VRAM usage (49%), temperature (59°C), and power draw (26.4W) for the NVIDIA A2 GPU running Phi-4 inference
 - **GPU Time Series** — Utilization and memory trends over time, showing inference bursts from the AI analysis cycles
 
 
@@ -68,11 +68,11 @@ Full observability stack with Prometheus, Grafana, and NVIDIA DCGM Exporter prov
 |---|---|
 | **AKS Arc (Azure Local)** | Kubernetes cluster on 2× Lenovo SE350 with NVIDIA A2 GPU |
 | **Foundry Local Inference Operator** | Private Preview operator that manages SLM lifecycle on GPU nodes |
-| **Phi-3 Mini 4K Instruct** | Microsoft 3.8B-parameter SLM for edge AI inference |
+| **Phi-4 Mini Instruct** | Microsoft 14B-parameter SLM for edge AI inference |
 | **Azure IoT Hub** | Cloud-managed device registry and D2C telemetry ingestion |
 | **Azure IoT Operations (AIO)** | On-cluster MQTT broker (`aio-broker`) for edge-mode telemetry; AIO Dataflow selectively exports anonymized metrics to IoT Hub |
 | **Drone Telemetry Simulator** | Python script simulating autonomous drones with waypoint patrols, battery return-to-base, and fleet cycling |
-| **Live Dashboard** | Flask + Socket.IO + Leaflet.js real-time kiosk UI with rule-engine insights and Phi-3 AI summary; supports demo / cloud / edge data modes |
+| **Live Dashboard** | Flask + Socket.IO + Leaflet.js real-time kiosk UI with rule-engine insights and Phi-4 AI summary; supports demo / cloud / edge data modes |
 
 ---
 
@@ -134,7 +134,7 @@ After the operator is installed, apply the model manifests:
 # Connect to the cluster
 az connectedk8s proxy --name <cluster> --resource-group <rg>
 
-# Deploy the Phi-3 model on the GPU node
+# Deploy the Phi-4 model on the GPU node
 kubectl apply -f k8s/foundry-local.yaml
 
 # Watch the model download and deployment (takes ~3-5 min)
@@ -166,7 +166,7 @@ cp .env.sample .env
 # Edit .env — fill in EDGE_AI_API_KEY and EDGE_AI_ENDPOINT (see below)
 
 # Port-forward the Foundry Local inference service (in a separate terminal)
-kubectl port-forward svc/phi-3-deployment -n foundry-local 8443:5000
+kubectl port-forward svc/phi-4-deployment -n foundry-local 8443:5000
 
 # Run the dashboard
 python app.py
@@ -174,7 +174,7 @@ python app.py
 
 #### How to get `EDGE_AI_ENDPOINT` and `EDGE_AI_API_KEY`
 
-**`EDGE_AI_ENDPOINT`** — This is the local URL exposed by the `kubectl port-forward` command above. When you run `kubectl port-forward svc/phi-3-deployment -n foundry-local 8443:5000`, the endpoint becomes:
+**`EDGE_AI_ENDPOINT`** — This is the local URL exposed by the `kubectl port-forward` command above. When you run `kubectl port-forward svc/phi-4-deployment -n foundry-local 8443:5000`, the endpoint becomes:
 
 ```
 https://localhost:8443
@@ -186,13 +186,13 @@ https://localhost:8443
 
 ```powershell
 # Get the API key from the Kubernetes secret
-kubectl get secret phi-3-deployment-api-keys -n foundry-local -o jsonpath='{.data.api-key-primary}' | ForEach-Object { [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($_)) }
+kubectl get secret phi-4-deployment-api-keys -n foundry-local -o jsonpath='{.data.api-key-primary}' | ForEach-Object { [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($_)) }
 ```
 
 Or on Linux/macOS:
 
 ```bash
-kubectl get secret phi-3-deployment-api-keys -n foundry-local \
+kubectl get secret phi-4-deployment-api-keys -n foundry-local \
   -o jsonpath='{.data.api-key-primary}' | base64 -d
 ```
 
@@ -208,7 +208,7 @@ EDGE_AI_API_KEY=fndry-pk-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 Open **http://localhost:5000** in a browser. The dashboard shows:
 - Live Leaflet map of Barcelona with drone positions
 - Real-time 5G telemetry cards (RSRP, RSRQ, SINR, throughput)
-- AI-powered fleet insights from Phi-3 (updated every 15 seconds)
+- AI-powered fleet insights from Phi-4 (updated every 15 seconds)
 - Aggregate network statistics
 
 ### Step 5: Run the drone simulator (optional — dashboard has demo mode)
@@ -296,7 +296,7 @@ This URL is served by the NGINX Ingress controller on the AKS Arc cluster via Me
 - You must be connected to the **AdaptiveCloudLab.com network** (the 172.21.229.x subnet must be routable from your machine)
 - Accept the self-signed certificate warning in your browser (the TLS cert is issued by a self-signed ClusterIssuer)
 - The dashboard auto-starts in demo mode with 5 simulated drones over Barcelona
-- AI insights from Phi-3 (running on the GPU node) update every 15 seconds
+- AI insights from Phi-4 (running on the GPU node) update every 15 seconds
 
 ### Network Details
 
@@ -310,7 +310,7 @@ This URL is served by the NGINX Ingress controller on the AKS Arc cluster via Me
 | Ingress Host | `mwc.adaptivecloudlab.com` |
 | Dashboard Pod | Runs on user pool nodes (`pdxuser`) |
 | Simulator Pod | Runs on user pool nodes (`pdxuser`) |
-| AI Endpoint (in-cluster) | `https://phi-3-deployment.foundry-local.svc:5000` |
+| AI Endpoint (in-cluster) | `https://phi-4-deployment.foundry-local.svc:5000` |
 
 ---
 
@@ -374,7 +374,7 @@ adaptivecloudlab-mwc26-demo/
 | **Real-time Leaflet map** | Drone positions on a dark tile layer centered on Barcelona (Fira Gran Via) with colored flight trails and signal-strength indicators |
 | **5G telemetry cards** | Per-drone metrics: RSRP (dBm), RSRQ (dB), SINR (dB), DL/UL throughput (Mbps), latency (ms), packet loss (%), altitude (m), speed (m/s), battery level |
 | **Drone lifecycle** | Drones patrol 12 Barcelona waypoints, return to base at 18% battery, charge to 92%, and are replaced by new drones with cycling NATO callsigns (Alpha → Zulu) |
-| **Edge AI Insights** | Rule-engine generates instant insights (signal degradation, battery alerts, coverage gaps); Phi-3 Mini overlays a one-sentence fleet health summary — no JSON parsing, fully reliable |
+| **Edge AI Insights** | Rule-engine generates instant insights (signal degradation, battery alerts, coverage gaps); Phi-4 Mini overlays a one-sentence fleet health summary — no JSON parsing, fully reliable |
 | **Fleet status badges** | Color-coded per-drone status: `PATROLLING` (green), `RETURNING` (yellow), `LAUNCHING` (blue), `CHARGING` (cyan), `LANDING` (orange), `EMERGENCY` (red) |
 | **Aggregate statistics** | Bottom bar with fleet-wide averages: RSRP, DL throughput, latency, active drone count, and messages/sec |
 | **Health indicators** | Top-right badges: WebSocket connection status (`CONNECTED`/`DISCONNECTED`), AI fleet health (`AI HEALTHY`/`AI DEGRADED`/`AI CRITICAL`), data mode (`LIVE`/`DEMO`), and live clock |
@@ -397,7 +397,7 @@ This creates a realistic, ever-evolving fleet where drones continuously cycle th
 The Edge AI analysis uses a two-layer approach for reliability:
 
 1. **Rule Engine** (instant) — Deterministic analysis of fleet telemetry generates structured insights: signal degradation warnings, battery alerts, coverage gap detection, and network quality assessments
-2. **Phi-3 Summary** (async) — The Edge AI model generates a one-sentence natural-language fleet health summary that overlays the rule-engine insights
+2. **Phi-4 Summary** (async) — The Edge AI model generates a one-sentence natural-language fleet health summary that overlays the rule-engine insights
 
 Insights are emitted immediately via WebSocket with a 15-second polling fallback at `/api/ai-insights`.
 
@@ -470,7 +470,7 @@ $iotHubHost = "<your-hub>.azure-devices.net"
 
 ## Foundry Local Details
 
-The demo uses **Foundry Local Inference Operator** (Private Preview) to run Phi-3 Mini on a GPU node.
+The demo uses **Foundry Local Inference Operator** (Private Preview) to run Phi-4 Mini on a GPU node.
 
 | Setting | Value |
 |---|---|
@@ -478,10 +478,10 @@ The demo uses **Foundry Local Inference Operator** (Private Preview) to run Phi-
 | Chart | `inference-operator-0.0.1-prp.5.tgz` (bundled) |
 | Namespace (operator) | `foundry-local-operator` |
 | Namespace (workloads) | `foundry-local` |
-| Model catalog alias | `phi-3-mini-4k` |
-| Model variant | `Phi-3-mini-4k-instruct-cuda-gpu:1` |
+| Model catalog alias | `phi-4-mini` |
+| Model variant | `Phi-4-mini-instruct` |
 | GPU | NVIDIA A2 (Ampere, 16 GB VRAM) |
-| Service | `phi-3-deployment.foundry-local.svc:5000` (ClusterIP) |
+| Service | `phi-4-deployment.foundry-local.svc:5000` (ClusterIP) |
 | Auth | API key via `api-key` header |
 
 **Dependencies:** cert-manager v1.19.2, trust-manager v0.20.3 (with `--secret-targets-enabled`).
@@ -563,7 +563,7 @@ Primary configuration file. All resource names are auto-derived from `PREFIX`. K
 | `DATA_MODE` | Telemetry source: `demo`, `cloud` (IoT Hub), or `edge` (AIO MQTT) | `cloud` |
 | `EDGE_AI_ENABLED` | Enable Foundry Local AI insights | `true` |
 | `EDGE_AI_ENDPOINT` | Foundry Local API URL | `https://localhost:8443` (via `kubectl port-forward`) |
-| `EDGE_AI_MODEL` | Model name for inference | `Phi-3-mini-4k-instruct-cuda-gpu:1` |
+| `EDGE_AI_MODEL` | Model name for inference | `Phi-4-mini-instruct` |
 | `EDGE_AI_API_KEY` | API key for Foundry Local | Retrieve from K8s secret — see [How to get EDGE_AI_API_KEY](#how-to-get-edge_ai_endpoint-and-edge_ai_api_key) |
 | `EDGE_AI_INTERVAL` | Seconds between AI analysis cycles | `15` |
 | `DRONE_COUNT` | Number of drones in demo mode | `5` |
@@ -647,7 +647,7 @@ Prometheus ──scrape──> node-exporter (all 6 nodes)
 | `kubectl` auth errors on Arc cluster | Use `az connectedk8s proxy --name <cluster> --resource-group <rg>` (no `--token` flag) |
 | Foundry Helm stuck in `pending-install` | Uninstall with `helm uninstall`, then install from local `.tgz` file |
 | trust-manager `SecretTargetsDisabled` | Apply the RBAC + deployment patch in [trust-manager patch](#trust-manager-patch-required) |
-| Model catalog alias not found | Use `phi-3-mini-4k` (not `phi-3-mini-4k-instruct`) |
+| Model catalog alias not found | Use `phi-4-mini` (not `phi-4-mini-instruct`) |
 | AI insights missing | Check that `simple-websocket` is installed (required for WebSocket transport); the dashboard also has a 15-second polling fallback at `/api/ai-insights` |
 | Dashboard shows no data | Check `DEMO_MODE=true` in `.env` and that the port-forward is running |
 | Edge mode shows no data | Verify `DATA_MODE=edge` and that the AIO MQTT broker is reachable at `MQTT_BROKER_HOST:MQTT_BROKER_PORT`; check dashboard logs for `[MQTT] Connection failed` |
