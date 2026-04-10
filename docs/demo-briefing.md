@@ -11,7 +11,7 @@
 1. [Architecture Overview](#architecture-overview)
 2. [The Dashboard & Drones](#the-dashboard--drones)
 3. [The AI Model — Why Phi-4 Mini](#the-ai-model--why-phi-4-mini)
-4. [What Foundry Local Provides](#what-foundry-local-provides)
+4. [Foundry Local — The Edge AI Platform](#foundry-local--the-edge-ai-platform)
 5. [IoT Operations & Data Sovereignty](#iot-operations--data-sovereignty)
 6. [Observability — Grafana](#observability--grafana)
 7. [Why Edge AI Matters](#why-edge-ai-matters)
@@ -158,52 +158,164 @@ User:
 
 ---
 
-## What Foundry Local Provides
+## Foundry Local — The Edge AI Platform
 
-**Talk track (Minute 5–6, continued)**
+**Talk track (Minute 4–6) — This is the centerpiece of the AI story**
 
-The **Foundry Local Inference Operator** (Private Preview, v0.0.1-prp.5) is a Kubernetes operator that manages the entire SLM lifecycle declaratively.
+### What Is Foundry Local?
 
-### What You Declare (61 lines of YAML)
+**Foundry Local** is Microsoft's end-to-end local AI solution for running inference entirely on-device — no cloud compute, no per-token costs, no data leaving your hardware. It provides:
+
+| Capability | Detail |
+|---|---|
+| **Lightweight runtime** | ~20 MB footprint built on [ONNX Runtime](https://onnxruntime.ai/) |
+| **Curated model catalog** | Pre-optimized models: Phi-4, Qwen, DeepSeek, Mistral, Whisper, and more |
+| **Automatic hardware acceleration** | Detects GPU (NVIDIA CUDA, AMD), NPU, or CPU and selects the best model variant automatically |
+| **Smart model management** | Download, cache, load/unload, version-pin — full lifecycle handled |
+| **OpenAI-compatible API** | `/v1/chat/completions` — drop-in replacement for Azure OpenAI or OpenAI endpoints |
+| **Multi-platform** | Windows, macOS (Intel & Apple Silicon), Linux, Android (preview) |
+| **SDKs** | Python, C#, JavaScript, Rust — embed the runtime directly in your app |
+| **Bring Your Own Model** | Import custom ONNX models alongside catalog models |
+
+> **Key message:** *"Foundry Local isn't just a model runner — it's a complete local AI platform. Same API as Azure OpenAI, but everything runs on your hardware. Your data never leaves the device."*
+
+### How Foundry Local Runs in This Demo
+
+This demo uses the **Foundry Local Inference Operator** — a Kubernetes-native extension of Foundry Local designed for edge server deployments on AKS Arc. While the standard Foundry Local CLI targets individual devices (laptops, desktops), the inference operator brings the same capabilities to Kubernetes clusters with GPU nodes.
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Foundry Local — Two Deployment Models                  │
+│                                                         │
+│  On-Device (CLI/SDK)          On-Cluster (K8s Operator) │
+│  ┌───────────────────┐        ┌───────────────────────┐ │
+│  │ foundry model run  │        │ kubectl apply -f      │ │
+│  │ foundry service    │        │   foundry-local.yaml  │ │
+│  │                    │        │                       │ │
+│  │ Windows/macOS/     │        │ AKS Arc + GPU nodes   │ │
+│  │ Linux/Android      │        │ (this demo)           │ │
+│  └───────────────────┘        └───────────────────────┘ │
+│                                                         │
+│  Same model catalog · Same ONNX Runtime · Same API      │
+└─────────────────────────────────────────────────────────┘
+```
+
+### The Inference Operator — Declarative Model Lifecycle
+
+The operator (Private Preview, v0.0.1-prp.5) turns model deployment into a Kubernetes-native workflow. You declare **what** you want; the operator handles **how**.
+
+#### What You Declare (61 lines of YAML)
 
 ```yaml
-# Model resource — what to download
+# Step 1: Declare the model — what to download from the catalog
 apiVersion: foundrylocal.azure.com/v1
 kind: Model
 metadata:
-  name: phi-4-mini
+  name: phi-3-mini
+  namespace: foundry-local
 spec:
+  displayName: "Phi-3 Mini 4K Instruct"
+  description: "Microsoft Phi-3 Mini - compact 3.8B parameter SLM for edge AI inference"
+  publisher: "Microsoft"
   source:
     type: catalog
     catalog:
-      alias: "phi-4-mini"
+      alias: "phi-3-mini-4k"    # Foundry Local resolves the best GPU variant
 
-# ModelDeployment — how to run it
+# Step 2: Declare the deployment — how to serve it
 apiVersion: foundrylocal.azure.com/v1
 kind: ModelDeployment
 metadata:
-  name: phi-4-deployment
+  name: phi-3-deployment
+  namespace: foundry-local
 spec:
+  displayName: "Phi-3 Edge AI Deployment"
   model:
-    ref: phi-4-mini
+    ref: phi-3-mini             # References the Model CRD above
   workloadType: generative
   compute: gpu
   replicas: 1
   resources:
+    requests:
+      cpu: "1"
+      memory: "4Gi"
     limits:
-      gpu: 1
+      cpu: "3"
+      memory: "5Gi"
+      gpu: 1                    # Pin to 1 NVIDIA A2 GPU
   authentication:
-    enabled: true
+    enabled: true               # Auto-generate API key
 ```
 
-### What the Operator Does Automatically
+#### What the Operator Does Automatically
 
-1. **Downloads** Phi-4-mini-instruct from the Foundry catalog (~2 GB)
-2. **Schedules** the inference pod on the GPU node (NVIDIA A2)
-3. **Creates** a ClusterIP service at `phi-4-deployment.foundry-local.svc:5000`
-4. **Issues** TLS certificates via cert-manager
-5. **Generates** an API key stored in a Kubernetes secret (`phi-4-deployment-api-keys`)
-6. **Exposes** an **OpenAI-compatible API** (`/v1/chat/completions`) — drop-in replacement for cloud endpoints
+| Step | What Happens | You Do Nothing |
+|---|---|---|
+| 1. **Model download** | Pulls `Phi-3-mini-4k-instruct-cuda-gpu:1` from the Foundry catalog | ✅ Auto |
+| 2. **GPU scheduling** | Pins inference pod to the NVIDIA A2 node (`pdxgpu` pool) | ✅ Auto |
+| 3. **Service creation** | Creates ClusterIP at `phi-3-deployment.foundry-local.svc:5000` | ✅ Auto |
+| 4. **TLS certificates** | Issues self-signed cert via cert-manager + trust-manager | ✅ Auto |
+| 5. **API key generation** | Stores key in K8s secret `phi-3-deployment-api-keys` | ✅ Auto |
+| 6. **Health monitoring** | Readiness/liveness probes on the inference endpoint | ✅ Auto |
+| 7. **OpenAI-compatible API** | Exposes `/v1/chat/completions` — identical to Azure OpenAI | ✅ Auto |
+
+> **Key message:** *"We wrote 61 lines of YAML. Foundry Local downloaded the model, scheduled it on the GPU, set up TLS, generated API keys, and gave us an OpenAI-compatible endpoint — all automatically."*
+
+### Live Demo Commands — Showing Foundry Local in Action
+
+There is no dedicated Foundry Local web dashboard — management happens through `kubectl` and the Kubernetes CRDs. These commands are great for live demo moments:
+
+```powershell
+# Show the model resource — what's deployed from the catalog
+kubectl get model -n foundry-local
+# NAME         AGE
+# phi-3-mini   14d
+
+# Show the model deployment — status, replicas, GPU assignment
+kubectl get modeldeployment -n foundry-local
+# NAME               READY   AGE
+# phi-3-deployment   1/1     14d
+
+# Inspect the full deployment details (model variant, compute, auth)
+kubectl describe modeldeployment phi-3-deployment -n foundry-local
+
+# Show the running inference pod on the GPU node
+kubectl get pods -n foundry-local -o wide
+# NAME                              READY   NODE (GPU node)
+# phi-3-deployment-xxxxx            1/1     moc-xxxxx (pdxgpu)
+
+# Show the auto-generated inference service endpoint
+kubectl get svc -n foundry-local
+# NAME               TYPE        CLUSTER-IP      PORT(S)
+# phi-3-deployment   ClusterIP   10.x.x.x        5000/TCP
+
+# Retrieve the auto-generated API key (stored securely in K8s)
+kubectl get secret phi-3-deployment-api-keys -n foundry-local \
+  -o jsonpath='{.data.api-key-primary}' | \
+  ForEach-Object { [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($_)) }
+# fndry-pk-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+
+# Test the inference endpoint directly (quick health check)
+kubectl run test-ai --rm -it --restart=Never --image=curlimages/curl -- \
+  curl -sk https://phi-3-deployment.foundry-local.svc:5000/v1/models
+```
+
+**For the demo:** Run `kubectl get model,modeldeployment -n foundry-local` to show the model is deployed and healthy in one command.
+
+### Foundry Local Model Catalog
+
+The Foundry catalog includes hardware-optimized models ready for edge deployment:
+
+| Model | Parameters | Use Cases |
+|---|---|---|
+| **Phi-4 Mini** | 3.8B | Chat, summarization, reasoning (this demo) |
+| **Phi-3 Mini 4K** | 3.8B | Chat, summarization (alternative) |
+| **Qwen 2.5** | 0.5B–7B | Multilingual chat, coding |
+| **DeepSeek R1** | 1.5B–7B | Reasoning, math |
+| **Mistral** | 7B | General-purpose chat |
+| **Whisper** | various | Speech-to-text transcription |
+
+Models are pre-quantized and optimized per hardware target — Foundry Local automatically selects the right variant (CUDA for NVIDIA, DirectML for AMD, CPU fallback).
 
 ### Foundry Local vs. Ollama
 
@@ -211,11 +323,17 @@ The repo includes both options (`foundry-local.yaml` and `edge-ai.yaml`):
 
 | Capability | Foundry Local | Ollama |
 |---|---|---|
-| Model lifecycle | Operator-managed (CRDs) | Manual `curl` pull |
-| Authentication | Auto-generated API keys | None |
-| TLS | Auto-provisioned certs | None |
-| API compatibility | OpenAI-compatible | OpenAI-compatible |
-| Production readiness | Enterprise-grade | Development/testing |
+| **Model lifecycle** | Operator-managed via K8s CRDs | Manual `curl` pull after deploy |
+| **Authentication** | Auto-generated API keys | None |
+| **TLS** | Auto-provisioned certs (cert-manager) | None |
+| **Hardware detection** | Auto-selects best model variant | Manual model selection |
+| **API compatibility** | OpenAI-compatible | OpenAI-compatible |
+| **Model catalog** | Curated, pre-optimized, versioned | Community hub |
+| **Runtime** | ONNX Runtime (~20 MB) | llama.cpp |
+| **Production readiness** | Enterprise-grade, K8s-native | Development/testing |
+| **BYOM** | ONNX format supported | GGUF format |
+
+> **Key message:** *"We could have used Ollama — it's simpler. But Foundry Local gives us enterprise features out of the box: auto TLS, API key auth, hardware-optimized model selection, and Kubernetes-native lifecycle management. It's the difference between a dev tool and a production platform."*
 
 ### GPU Resource Utilization
 
@@ -227,6 +345,29 @@ The repo includes both options (`foundry-local.yaml` and `edge-ai.yaml`):
 | Temperature | ~59°C at steady state |
 | Power Draw | ~26.4 W during inference |
 | Inference Latency | ~2–5 seconds per call (120 tokens) |
+
+### Foundry Local + Azure OpenAI — Cloud-Edge Symmetry
+
+A key architectural benefit: **the same application code works with both Foundry Local and Azure OpenAI**. The dashboard's AI call is a standard OpenAI-format HTTP POST:
+
+```python
+# This code works against BOTH endpoints — just change the URL and key
+response = requests.post(
+    f"{endpoint}/v1/chat/completions",
+    headers={"api-key": api_key},
+    json={
+        "model": model_name,
+        "messages": [{"role": "system", "content": "..."}, {"role": "user", "content": "..."}],
+        "temperature": 0.3,
+        "max_tokens": 120
+    }
+)
+```
+
+- **Edge (this demo):** `endpoint = https://phi-3-deployment.foundry-local.svc:5000`
+- **Cloud (swap anytime):** `endpoint = https://your-resource.openai.azure.com`
+
+> **Key message:** *"Start at the edge with Foundry Local, scale to the cloud with Azure OpenAI — same code, same API, zero refactoring."*
 
 ---
 
@@ -326,7 +467,9 @@ The AIO Dataflow (`k8s/iot-ops-dataflow.yaml`) transforms data before export:
 - [ ] Dashboard accessible at `https://mwc.adaptivecloudlab.com`
 - [ ] Grafana accessible at `https://grafana.adaptivecloudlab.com`
 - [ ] All pods running: `kubectl get pods -n drone-demo -n foundry-local -n monitoring`
-- [ ] GPU metrics appearing in Grafana
+- [ ] Foundry Local model healthy: `kubectl get model,modeldeployment -n foundry-local` shows `READY 1/1`
+- [ ] GPU metrics appearing in Grafana (VRAM ~49%, utilization spiking every 15s)
+- [ ] AI insights updating in the dashboard (check top-right AI health badge)
 - [ ] Drones actively patrolling on the map
 
 ### 8-Minute Demo Flow
@@ -334,13 +477,15 @@ The AIO Dataflow (`k8s/iot-ops-dataflow.yaml`) transforms data before export:
 | Time | Show | Say |
 |---|---|---|
 | **0–2 min** | Dashboard map + architecture | *"5 autonomous drones patrolling Barcelona on a real K8s cluster running on two servers in this room."* |
-| **2–4 min** | Telemetry cards + fleet stats | *"Real-time 5G metrics — signal strength, throughput, latency. Drones return to base at low battery and are replaced."* |
-| **4–6 min** | AI insights panel + Grafana GPU | *"Phi-4 Mini on the NVIDIA A2 GPU analyzes the fleet every 15 seconds. Watch the GPU utilization spike."* |
-| **6–8 min** | Dataflow YAML + architecture diagram | *"Raw data stays on-prem. Only anonymized metrics reach Azure. This is edge AI done right."* |
+| **2–3 min** | Telemetry cards + fleet stats | *"Real-time 5G metrics — signal strength, throughput, latency. Drones return to base at low battery and are replaced."* |
+| **3–4 min** | AI insights panel + Grafana GPU | *"Watch the AI insights update every 15 seconds. That's Phi-3 Mini running on the GPU — see the utilization spike in Grafana."* |
+| **4–6 min** | `kubectl` Foundry Local commands | *"Foundry Local is the platform making this possible. 61 lines of YAML — model download, GPU scheduling, TLS, API keys — all automatic."* Run `kubectl get model,modeldeployment -n foundry-local` and `kubectl describe modeldeployment phi-3-deployment -n foundry-local`. |
+| **6–7 min** | Dataflow YAML + architecture diagram | *"Raw data stays on-prem. Only anonymized metrics reach Azure. GPS is rounded to 1km precision before export."* |
+| **7–8 min** | Code snippet (cloud-edge symmetry) | *"Same OpenAI API format. Start at the edge with Foundry Local, scale to the cloud with Azure OpenAI — zero refactoring."* |
 
 ### Closing Statement
 
-> *"This demo shows what's possible when you combine Kubernetes, edge AI, and controlled cloud integration. Enterprise-grade AI inference running on affordable edge hardware, with full data sovereignty — no cloud compute required."*
+> *"This demo shows what's possible when you combine Foundry Local, AKS Arc, and Azure IoT Operations. Enterprise-grade AI inference at the edge — same API as Azure OpenAI, full data sovereignty, no cloud compute required. 61 lines of YAML to go from zero to a production AI endpoint."*
 
 ### Fallback Options
 
