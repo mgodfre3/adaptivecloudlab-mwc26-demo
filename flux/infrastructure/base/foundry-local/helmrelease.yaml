@@ -3,12 +3,17 @@
 #
 # Prerequisites:
 #   - cert-manager and trust-manager must be running (hard dependency).
-#   - The 'foundry-api-key' Secret must exist in the foundry-local namespace
+#   - The 'foundry-api-key' Secret MUST exist in the flux-system namespace
 #     before this HelmRelease is reconciled. Create it with:
 #       kubectl create secret generic foundry-api-key \
-#         --namespace foundry-local \
+#         --namespace flux-system \
 #         --from-literal=apiKey=<YOUR_KEY>
 #     Or provision it via Azure Key Vault + External Secrets Operator.
+#     If the apiKey is not required for Private Preview access, create the
+#     Secret with an empty value:
+#       kubectl create secret generic foundry-api-key \
+#         --namespace flux-system \
+#         --from-literal=apiKey=""
 #
 # Note: This chart is in Private Preview. The OCI chart at
 #   oci://mcr.microsoft.com/foundrylocalonazurelocal/helmcharts/helm/inferenceoperator
@@ -54,4 +59,3 @@ spec:
       name: foundry-api-key
       valuesKey: apiKey
       targetPath: apiKey
-      optional: true

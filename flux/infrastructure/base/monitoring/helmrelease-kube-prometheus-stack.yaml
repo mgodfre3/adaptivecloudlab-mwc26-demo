@@ -25,7 +25,19 @@ spec:
       interval: 1h
   # Values are stored in a ConfigMap so they can be patched per cluster.
   # See values-kube-prometheus-stack.yaml for the full values definition.
+  #
+  # Grafana admin credentials are sourced from the 'grafana-admin-credentials' Secret.
+  # The Secret must be pre-provisioned in the flux-system namespace; see the
+  # comment in values-kube-prometheus-stack.yaml for creation instructions.
   valuesFrom:
     - kind: ConfigMap
       name: kube-prometheus-stack-values
       valuesKey: values.yaml
+    - kind: Secret
+      name: grafana-admin-credentials
+      valuesKey: admin-user
+      targetPath: grafana.adminUser
+    - kind: Secret
+      name: grafana-admin-credentials
+      valuesKey: admin-password
+      targetPath: grafana.adminPassword

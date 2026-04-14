@@ -1,0 +1,13 @@
+# Patch: Set Grafana root_url for the mobile cluster.
+# Update the hostname to match the mobile cluster's ingress FQDN.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: kube-prometheus-stack
+  namespace: flux-system
+spec:
+  values:
+    grafana:
+      grafana.ini:
+        server:
+          root_url: https://grafana.adaptivecloudlab.com

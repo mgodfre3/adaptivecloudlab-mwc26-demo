@@ -1,7 +1,15 @@
 # ConfigMap holding kube-prometheus-stack Helm values.
 # These values are sourced from k8s/monitoring-values.yaml.
-# To apply cluster-specific overrides (e.g. storage class, node selectors),
+# To apply cluster-specific overrides (e.g. storage class, node selectors, domain),
 # patch this ConfigMap in the cluster overlay (e.g. infrastructure/mobile/patches/).
+#
+# Grafana admin credentials are NOT stored here. They are sourced from the
+# 'grafana-admin-credentials' Secret (see helmrelease-kube-prometheus-stack.yaml).
+# Create the Secret before bootstrapping Flux:
+#   kubectl create secret generic grafana-admin-credentials \
+#     --namespace flux-system \
+#     --from-literal=admin-user=admin \
+#     --from-literal=admin-password=<YOUR_PASSWORD>
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -11,8 +19,6 @@ data:
   values.yaml: |
     grafana:
       enabled: true
-      adminUser: admin
-      adminPassword: MWC26-Demo!
 
       persistence:
         enabled: true
@@ -37,7 +43,7 @@ data:
 
       grafana.ini:
         server:
-          root_url: https://grafana.adaptivecloudlab.com
+          # root_url is cluster-specific; override via a cluster overlay patch.
           serve_from_sub_path: false
         auth.anonymous:
           enabled: true
