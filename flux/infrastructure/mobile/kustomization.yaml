@@ -1,0 +1,10 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Inherits all base infrastructure resources and applies mobile-specific patches.
+resources:
+  - ../base
+patches:
+  - path: patches/dcgm-nodeselector.yaml
+    target:
+      kind: HelmRelease
+      name: dcgm-exporter

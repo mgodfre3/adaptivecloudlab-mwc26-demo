@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: foundry-local
+---
+# The models namespace is separate from the operator namespace so that model
+# workloads (GPU pods) can be scheduled independently and scoped with RBAC.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: foundry-models
