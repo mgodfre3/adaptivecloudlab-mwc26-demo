@@ -1,0 +1,224 @@
+# =============================================================================
+#  Video Analysis Dashboard — Kubernetes Manifests
+#  Deploys video dashboard + CV inference on the VI AKS Arc cluster
+# =============================================================================
+#
+#  Usage:
+#    1. Run the deploy script (renders template + applies):
+#         .\scripts\07-deploy-video-dashboard.ps1
+#    2. Or manually:
+#         kubectl apply -f k8s/video-dashboard.yaml
+#
+# =============================================================================
+
+# ── Namespace ────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: video-analysis
+  labels:
+    app.kubernetes.io/part-of: mwc26-demo
+    cluster: vi-mobile
+
+---
+# ── ConfigMap — non-secret configuration ─────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: video-dashboard-config
+  namespace: video-analysis
+data:
+  DASHBOARD_PORT: "5000"
+  EDGE_AI_ENDPOINT: "https://phi-4-deployment.vi-foundry-mdl.svc:5000"
+  EDGE_AI_MODEL: "Phi-4-mini-instruct"
+  VI_ENDPOINT: "http://videoindexer.video-analysis.svc:80"
+  DATA_DIR: "/data"
+  CV_MODEL_PATH: "/models/yolov8s.onnx"
+  CV_CONFIDENCE_THRESHOLD: "0.5"
+
+---
+# ── PVC for video storage (Longhorn RWX) ─────────────────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: video-data
+  namespace: video-analysis
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 50Gi
+
+---
+# ── Dashboard Deployment ─────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: video-dashboard
+  namespace: video-analysis
+  labels:
+    app: video-dashboard
+    app.kubernetes.io/part-of: mwc26-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: video-dashboard
+  template:
+    metadata:
+      labels:
+        app: video-dashboard
+    spec:
+      containers:
+        - name: video-dashboard
+          image: acxcontregwus2-c6chcgfjardafsb5.azurecr.io/drone-demo/video-dashboard:latest
+          ports:
+            - containerPort: 5000
+              name: http
+          envFrom:
+            - configMapRef:
+                name: video-dashboard-config
+            - secretRef:
+                name: video-dashboard-secrets
+          volumeMounts:
+            - name: video-data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 5000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+      volumes:
+        - name: video-data
+          persistentVolumeClaim:
+            claimName: video-data
+      imagePullSecrets:
+        - name: acr-pull-secret
+
+---
+# ── Dashboard Service ────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: video-dashboard
+  namespace: video-analysis
+  labels:
+    app: video-dashboard
+spec:
+  selector:
+    app: video-dashboard
+  ports:
+    - port: 80
+      targetPort: 5000
+      name: http
+  type: ClusterIP
+
+---
+# ── Self-Signed ClusterIssuer (for TLS) ──────────────────────────────────────
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: video-analysis-selfsigned
+spec:
+  selfSigned: {}
+
+---
+# ── TLS Certificate ──────────────────────────────────────────────────────────
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: video-analysis-tls
+  namespace: video-analysis
+spec:
+  secretName: video-analysis-tls
+  issuerRef:
+    name: video-analysis-selfsigned
+    kind: ClusterIssuer
+  dnsNames:
+    - acx.mobile
+    - "*.acx.mobile"
+  duration: 8760h   # 1 year
+  renewBefore: 720h  # 30 days
+
+---
+# ── Ingress ──────────────────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: video-dashboard
+  namespace: video-analysis
+  labels:
+    app: video-dashboard
+  annotations:
+    # WebSocket support for Socket.IO
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$remote_addr"
+    # Allow large request bodies (video uploads)
+    nginx.ingress.kubernetes.io/proxy-body-size: "500m"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - video.acx.mobile
+      secretName: video-analysis-tls
+  rules:
+    - host: video.acx.mobile
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: video-dashboard
+                port:
+                  number: 80
+
+---
+# ── Catch-all Ingress (direct IP access without DNS/hosts file) ──────────────
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: video-dashboard-catchall
+  namespace: video-analysis
+  labels:
+    app: video-dashboard
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$remote_addr"
+    nginx.ingress.kubernetes.io/proxy-body-size: "500m"
+spec:
+  ingressClassName: nginx
+  tls:
+    - secretName: video-analysis-tls
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: video-dashboard
+                port:
+                  number: 80
+

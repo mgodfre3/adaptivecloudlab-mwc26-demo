@@ -67,7 +67,8 @@ $prefix = $config["PREFIX"]
 if (-not $prefix) { Write-Host "ERROR: PREFIX not set in $EnvFile" -ForegroundColor Red; exit 1 }
 
 $AcrName = "acxcontregwus2"
-$AcrLoginServer = "$AcrName.azurecr.io"
+$AcrLoginServer = az acr show --name $AcrName --query loginServer -o tsv 2>$null
+if (-not $AcrLoginServer) { $AcrLoginServer = "$AcrName.azurecr.io" }
 $config["ACR_LOGIN_SERVER"] = $AcrLoginServer
 
 # Derive TLS_DNS_BASE from VIDEO_DASHBOARD_HOSTNAME
