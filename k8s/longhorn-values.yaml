@@ -1,0 +1,12 @@
+# =============================================================================
+# Longhorn Helm Values — Azure Local (Mobile Stamp)
+# Minimal overrides for RWX storage on AKS Arc / Azure Local
+# =============================================================================
+
+defaultSettings:
+  defaultDataPath: /var/lib/longhorn
+  replicaAutoBalance: best-effort
+  storageMinimalAvailablePercentage: 15
+
+persistence:
+  defaultClassReplicaCount: 2
