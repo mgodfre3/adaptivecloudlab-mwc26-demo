@@ -50,7 +50,7 @@ FLASK_SECRET = os.getenv("FLASK_SECRET_KEY", secrets.token_hex(32))
 # ── Flask + Socket.IO ────────────────────────────────────────────────────────
 app = Flask(__name__)
 app.config["SECRET_KEY"] = FLASK_SECRET
-app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024  # 500 MB upload limit
+app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024  # 2 GB upload limit
 
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
