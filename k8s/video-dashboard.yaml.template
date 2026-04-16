@@ -191,33 +191,6 @@ spec:
                 port:
                   number: 80
 
----
-# ── Catch-all Ingress (direct IP access without DNS/hosts file) ──────────────
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: video-dashboard-catchall
-  namespace: video-analysis
-  labels:
-    app: video-dashboard
-  annotations:
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
-    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
-    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
-    nginx.ingress.kubernetes.io/upstream-hash-by: "$remote_addr"
-    nginx.ingress.kubernetes.io/proxy-body-size: "500m"
-spec:
-  ingressClassName: nginx
-  tls:
-    - secretName: video-analysis-tls
-  rules:
-    - http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: video-dashboard
-                port:
-                  number: 80
+# NOTE: Catch-all ingress removed — it conflicts with Arc Video Indexer extension
+# which needs host "_" / path "/" for its own ingress. Use the host-based ingress above
+# (video.acx.mobile) or configure DNS/hosts file to reach the dashboard.
