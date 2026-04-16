@@ -321,7 +321,7 @@ def _process_video(video_id: str):
     # Generate demo detections
     cfg = {
         "filename": vid["filename"],
-        "duration": vid.get("duration", random.uniform(60, 240)),
+        "duration": vid.get("duration") or random.uniform(60, 240),
         "tower": random.choice(DEMO_TOWER_LOCATIONS),
         "detection_count": random.randint(8, 30),
         "anomaly_rate": random.uniform(0.0, 0.25),
