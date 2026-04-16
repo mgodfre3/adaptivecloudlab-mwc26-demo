@@ -260,7 +260,7 @@
   });
 
   socket.on('processing_started', (data) => {
-    videosMap[data.id] = { ...videosMap[data.id], id: data.id, filename: data.filename, status: 'processing',
+    videosMap[data.id] = { ...videosMap[data.id], id: data.id, filename: data.filename, video_url: data.video_url, status: 'processing',
       pipeline: { upload: 'complete', cv_inference: 'pending', vi_indexing: 'pending', ai_summary: 'pending' } };
     renderVideoTabs();
     selectVideo(data.id);
@@ -364,6 +364,12 @@
     videoNameEl.textContent = vid.filename || id;
     placeholder.style.display = 'none';
     renderVideoTabs();
+
+    // Load the actual video file into the player
+    if (vid.video_url) {
+      videoPlayer.src = vid.video_url;
+      videoPlayer.style.display = 'block';
+    }
 
     // Update pipeline display
     updatePipeline(vid.pipeline || {});

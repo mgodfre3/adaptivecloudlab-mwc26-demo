@@ -416,10 +416,13 @@ def upload_video():
     dest = UPLOAD_DIR / safe_name
     f.save(str(dest))
 
+    video_url = f"/data/uploads/{safe_name}"
+
     with videos_lock:
         videos[video_id] = {
             "id": video_id,
             "filename": f.filename,
+            "video_url": video_url,
             "status": "processing",
             "uploaded_at": datetime.now(timezone.utc).isoformat(),
             "duration": None,
@@ -433,7 +436,7 @@ def upload_video():
             },
         }
 
-    socketio.emit("processing_started", {"id": video_id, "filename": f.filename})
+    socketio.emit("processing_started", {"id": video_id, "filename": f.filename, "video_url": video_url})
 
     thread = threading.Thread(target=_process_video, args=(video_id,), daemon=True)
     thread.start()
@@ -450,6 +453,7 @@ def list_videos():
             result.append({
                 "id": v["id"],
                 "filename": v["filename"],
+                "video_url": v.get("video_url"),
                 "status": v["status"],
                 "uploaded_at": v["uploaded_at"],
                 "duration": v.get("duration"),
@@ -607,8 +611,8 @@ def handle_connect():
     app.logger.info("Client connected")
     with videos_lock:
         video_list = [
-            {"id": v["id"], "filename": v["filename"], "status": v["status"],
-             "pipeline": v.get("pipeline", {})}
+            {"id": v["id"], "filename": v["filename"], "video_url": v.get("video_url"),
+             "status": v["status"], "pipeline": v.get("pipeline", {})}
             for v in videos.values()
         ]
     socketio.emit("video_list", video_list)
