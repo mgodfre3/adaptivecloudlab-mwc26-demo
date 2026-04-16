@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Drone Video Intelligence — Azure Local</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎬</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<!-- ═══════════════════ Header ═══════════════════ -->
+<header id="topbar">
+  <div class="title-group">
+    <h1>🎬 Drone Video Intelligence</h1>
+    <div class="subtitle">Powered by Foundry Local on Azure Local</div>
+  </div>
+  <div class="status-group">
+    <div class="status-indicator">
+      <div class="status-dot checking" id="ai-dot"></div>
+      <span>AI</span>
+    </div>
+    <div class="status-indicator">
+      <div class="status-dot checking" id="vi-dot"></div>
+      <span>VI</span>
+    </div>
+    <div id="clock"></div>
+  </div>
+</header>
+
+<!-- ═══════════════════ Main Grid ═══════════════════ -->
+<main id="main">
+
+  <!-- ── Left Column: Video + Pipeline ── -->
+  <div id="left-col">
+    <div class="card" id="video-card">
+      <div class="card-header">
+        <h2><span class="icon">🎥</span> Video Player</h2>
+        <span id="video-name" style="font-size:12px;color:var(--text-dim);font-family:var(--font-mono);">No video selected</span>
+      </div>
+      <div class="card-body">
+        <div id="video-container">
+          <video id="video-player" controls preload="metadata"></video>
+          <canvas id="detection-overlay"></canvas>
+          <div id="video-placeholder">
+            <div class="placeholder-icon">📹</div>
+            <p>Select a video below or upload a new flight recording</p>
+          </div>
+        </div>
+        <div id="upload-zone">
+          <div id="drop-area" role="button" tabindex="0">
+            📁 Drop MP4 here or <strong>click to browse</strong>
+          </div>
+          <input type="file" id="file-input" accept=".mp4,video/mp4">
+        </div>
+      </div>
+    </div>
+
+    <div class="card" id="pipeline-card">
+      <div class="card-header">
+        <h2><span class="icon">⚡</span> Processing Pipeline</h2>
+      </div>
+      <div class="card-body" style="padding:12px 16px;">
+        <div id="pipeline-steps">
+          <div class="pipeline-step pending" data-step="upload">
+            <div class="step-icon">📤</div>
+            <div class="step-label">Upload</div>
+            <div class="step-status">waiting</div>
+          </div>
+          <div class="pipeline-connector"></div>
+          <div class="pipeline-step pending" data-step="cv_inference">
+            <div class="step-icon">🔍</div>
+            <div class="step-label">CV Inference</div>
+            <div class="step-status">waiting</div>
+          </div>
+          <div class="pipeline-connector"></div>
+          <div class="pipeline-step pending" data-step="vi_indexing">
+            <div class="step-icon">🎞️</div>
+            <div class="step-label">VI Indexing</div>
+            <div class="step-status">waiting</div>
+          </div>
+          <div class="pipeline-connector"></div>
+          <div class="pipeline-step pending" data-step="ai_summary">
+            <div class="step-icon">🤖</div>
+            <div class="step-label">AI Summary</div>
+            <div class="step-status">waiting</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Right Column: Analysis ── -->
+  <div id="right-col">
+
+    <!-- Stats -->
+    <div class="card" id="stats-card">
+      <div class="card-header">
+        <h2><span class="icon">📊</span> Analysis Results</h2>
+      </div>
+      <div class="card-body" style="padding:14px 18px;">
+        <div id="stats-grid">
+          <div class="stat-box">
+            <div class="stat-value" id="stat-detections">—</div>
+            <div class="stat-label">Detections</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value" id="stat-labels">—</div>
+            <div class="stat-label">Object Types</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value" id="stat-anomalies">—</div>
+            <div class="stat-label">Anomalies</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value" id="stat-confidence">—</div>
+            <div class="stat-label">Avg Confidence</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Detection Timeline -->
+    <div class="card">
+      <div class="card-header">
+        <h2><span class="icon">📈</span> Detection Timeline</h2>
+      </div>
+      <div class="card-body" style="padding:14px 18px;">
+        <div id="timeline-bar">
+          <div id="timeline-cursor" style="left:0"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- AI Summary -->
+    <div class="card" id="ai-summary-card">
+      <div class="card-header">
+        <h2><span class="icon">🤖</span> AI Summary <small style="color:var(--text-muted);font-weight:400;">Foundry Local</small></h2>
+      </div>
+      <div class="card-body">
+        <div id="ai-summary-text">Select a video to view the AI-generated analysis summary.</div>
+        <span id="ai-source-badge" style="display:none;"></span>
+      </div>
+    </div>
+
+    <!-- Detections table -->
+    <div class="card flex-grow" id="detections-card">
+      <div class="card-header">
+        <h2><span class="icon">📋</span> Detections</h2>
+        <span id="detection-count-badge" style="font-size:11px;font-family:var(--font-mono);color:var(--accent)"></span>
+      </div>
+      <div class="card-body">
+        <table id="detections-table">
+          <thead>
+            <tr>
+              <th>Frame</th>
+              <th>Time</th>
+              <th>Label</th>
+              <th>Confidence</th>
+              <th>Type</th>
+            </tr>
+          </thead>
+          <tbody id="detections-tbody"></tbody>
+        </table>
+        <div class="empty-state" id="detections-empty">
+          <div class="empty-icon">🔍</div>
+          <p>No detections yet</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Query -->
+    <div class="card" id="query-card">
+      <div class="card-header">
+        <h2><span class="icon">💬</span> Ask Foundry Local</h2>
+      </div>
+      <div class="card-body" style="padding:14px 18px;">
+        <form id="query-form" onsubmit="return false;">
+          <input type="text" id="query-input" placeholder="What antennas were found?" autocomplete="off">
+          <button type="submit" id="query-btn" title="Send">→</button>
+        </form>
+        <div id="query-response"></div>
+      </div>
+    </div>
+
+    <!-- Export -->
+    <div class="card">
+      <div class="card-header">
+        <h2><span class="icon">📍</span> Export</h2>
+      </div>
+      <div class="card-body" style="padding:12px 18px;">
+        <div id="export-bar">
+          <button class="export-btn" onclick="exportData('geojson')">GeoJSON</button>
+          <button class="export-btn" onclick="exportData('csv')">CSV</button>
+          <button class="export-btn" onclick="exportData('json')">JSON</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</main>
+
+<!-- ═══════════════════ Footer / Video Strip ═══════════════════ -->
+<footer id="footer">
+  <span id="footer-label">Videos:</span>
+  <div id="video-tabs"></div>
+  <div id="upload-tab" onclick="document.getElementById('file-input').click()">+ Upload</div>
+</footer>
+
+<!-- ═══════════════════ Scripts ═══════════════════ -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+<script>
+(function() {
+  'use strict';
+
+  // ── State ──────────────────────────────────────────────────────────
+  let currentVideoId = null;
+  let videosMap = {};           // id -> video data
+  let currentDetections = [];
+
+  // ── DOM refs ───────────────────────────────────────────────────────
+  const $ = (sel) => document.querySelector(sel);
+  const $$ = (sel) => document.querySelectorAll(sel);
+  const clockEl        = $('#clock');
+  const aiDot          = $('#ai-dot');
+  const viDot          = $('#vi-dot');
+  const videoPlayer    = $('#video-player');
+  const overlay        = $('#detection-overlay');
+  const placeholder    = $('#video-placeholder');
+  const videoNameEl    = $('#video-name');
+  const dropArea       = $('#drop-area');
+  const fileInput      = $('#file-input');
+  const videoTabsEl    = $('#video-tabs');
+  const timelineBar    = $('#timeline-bar');
+  const timelineCursor = $('#timeline-cursor');
+  const summaryText    = $('#ai-summary-text');
+  const sourceBadge    = $('#ai-source-badge');
+  const detectionsBody = $('#detections-tbody');
+  const detectionsEmpty= $('#detections-empty');
+  const queryInput     = $('#query-input');
+  const queryBtn       = $('#query-btn');
+  const queryResponse  = $('#query-response');
+
+  // ── Socket.IO ──────────────────────────────────────────────────────
+  const socket = io();
+
+  socket.on('connect', () => console.log('🟢 Connected'));
+  socket.on('disconnect', () => console.log('🔴 Disconnected'));
+
+  socket.on('video_list', (list) => {
+    list.forEach(v => { videosMap[v.id] = { ...videosMap[v.id], ...v }; });
+    renderVideoTabs();
+    // Auto-select first complete video
+    if (!currentVideoId) {
+      const first = list.find(v => v.status === 'complete');
+      if (first) selectVideo(first.id);
+    }
+  });
+
+  socket.on('processing_started', (data) => {
+    videosMap[data.id] = { ...videosMap[data.id], id: data.id, filename: data.filename, status: 'processing',
+      pipeline: { upload: 'complete', cv_inference: 'pending', vi_indexing: 'pending', ai_summary: 'pending' } };
+    renderVideoTabs();
+    selectVideo(data.id);
+  });
+
+  socket.on('processing_update', (data) => {
+    if (videosMap[data.id]) {
+      videosMap[data.id].pipeline = { ...videosMap[data.id].pipeline, [data.step]: data.status };
+    }
+    if (currentVideoId === data.id) updatePipeline(videosMap[data.id]?.pipeline || {});
+  });
+
+  socket.on('detection_complete', (data) => {
+    if (videosMap[data.id]) {
+      videosMap[data.id].pipeline = { ...videosMap[data.id].pipeline, cv_inference: 'complete' };
+      videosMap[data.id].detection_count = data.detection_count;
+    }
+    if (currentVideoId === data.id) {
+      updatePipeline(videosMap[data.id]?.pipeline || {});
+      loadDetections(data.id);
+    }
+  });
+
+  socket.on('indexing_complete', (data) => {
+    if (videosMap[data.id]) {
+      videosMap[data.id].pipeline = { ...videosMap[data.id].pipeline, vi_indexing: 'complete' };
+    }
+    if (currentVideoId === data.id) updatePipeline(videosMap[data.id]?.pipeline || {});
+  });
+
+  socket.on('analysis_complete', (data) => {
+    if (videosMap[data.id]) {
+      videosMap[data.id].status = 'complete';
+      videosMap[data.id].pipeline = { upload:'complete', cv_inference:'complete', vi_indexing:'complete', ai_summary:'complete' };
+      videosMap[data.id].summary = data.summary;
+    }
+    renderVideoTabs();
+    if (currentVideoId === data.id) {
+      updatePipeline(videosMap[data.id]?.pipeline || {});
+      renderSummary(data.summary);
+      loadDetections(data.id);
+    }
+  });
+
+  // ── Clock ──────────────────────────────────────────────────────────
+  function updateClock() {
+    const now = new Date();
+    clockEl.textContent = now.toLocaleTimeString('en-US', { hour12: false, hour:'2-digit', minute:'2-digit', second:'2-digit' });
+  }
+  setInterval(updateClock, 1000);
+  updateClock();
+
+  // ── Health checks ──────────────────────────────────────────────────
+  async function checkHealth() {
+    try {
+      const resp = await fetch('/api/ai-status');
+      const data = await resp.json();
+      aiDot.className = 'status-dot ' + (data.foundry_local.status === 'healthy' ? 'healthy' : '');
+      viDot.className = 'status-dot ' + (data.video_indexer.status === 'healthy' ? 'healthy' : '');
+    } catch {
+      aiDot.className = 'status-dot';
+      viDot.className = 'status-dot';
+    }
+  }
+  checkHealth();
+  setInterval(checkHealth, 15000);
+
+  // ── Load initial videos ────────────────────────────────────────────
+  async function loadVideos() {
+    try {
+      const resp = await fetch('/api/videos');
+      const list = await resp.json();
+      list.forEach(v => { videosMap[v.id] = { ...videosMap[v.id], ...v }; });
+      renderVideoTabs();
+      if (!currentVideoId && list.length > 0) {
+        const first = list.find(v => v.status === 'complete') || list[0];
+        selectVideo(first.id);
+      }
+    } catch(e) { console.error('Failed to load videos', e); }
+  }
+  loadVideos();
+
+  // ── Video tabs ─────────────────────────────────────────────────────
+  function renderVideoTabs() {
+    videoTabsEl.innerHTML = '';
+    Object.values(videosMap).forEach(v => {
+      const tab = document.createElement('div');
+      tab.className = `video-tab ${v.status || ''} ${v.id === currentVideoId ? 'active' : ''}`;
+      tab.innerHTML = `<span class="tab-status"></span>${v.filename || v.id}`;
+      tab.onclick = () => selectVideo(v.id);
+      videoTabsEl.appendChild(tab);
+    });
+  }
+
+  // ── Select video ───────────────────────────────────────────────────
+  async function selectVideo(id) {
+    currentVideoId = id;
+    const vid = videosMap[id];
+    if (!vid) return;
+
+    videoNameEl.textContent = vid.filename || id;
+    placeholder.style.display = 'none';
+    renderVideoTabs();
+
+    // Update pipeline display
+    updatePipeline(vid.pipeline || {});
+
+    // Load detections
+    await loadDetections(id);
+
+    // Load summary
+    if (vid.status === 'complete') {
+      try {
+        const resp = await fetch(`/api/videos/${id}/summary`);
+        const summary = await resp.json();
+        vid.summary = summary;
+        renderSummary(summary);
+      } catch(e) { console.error(e); }
+    } else {
+      summaryText.textContent = 'Processing in progress…';
+      sourceBadge.style.display = 'none';
+    }
+  }
+
+  // ── Pipeline display ───────────────────────────────────────────────
+  function updatePipeline(pipeline) {
+    const steps = ['upload', 'cv_inference', 'vi_indexing', 'ai_summary'];
+    const labels = { pending: 'waiting', running: 'running', complete: 'done' };
+    const connectors = $$('.pipeline-connector');
+
+    steps.forEach((step, i) => {
+      const el = $(`.pipeline-step[data-step="${step}"]`);
+      if (!el) return;
+      const status = pipeline[step] || 'pending';
+      el.className = `pipeline-step ${status}`;
+      el.querySelector('.step-status').textContent = labels[status] || status;
+
+      // Activate connector if this step is complete
+      if (i > 0 && connectors[i-1]) {
+        connectors[i-1].className = 'pipeline-connector' +
+          (['complete','running'].includes(status) ? ' active' : '');
+      }
+    });
+  }
+
+  // ── Detections ─────────────────────────────────────────────────────
+  async function loadDetections(id) {
+    try {
+      const resp = await fetch(`/api/videos/${id}/detections`);
+      currentDetections = await resp.json();
+      renderDetections(currentDetections);
+      renderTimeline(currentDetections);
+      updateStats(currentDetections);
+    } catch(e) { console.error(e); }
+  }
+
+  function renderDetections(detections) {
+    detectionsBody.innerHTML = '';
+    if (!detections.length) {
+      detectionsEmpty.style.display = 'flex';
+      $('#detection-count-badge').textContent = '';
+      return;
+    }
+    detectionsEmpty.style.display = 'none';
+    $('#detection-count-badge').textContent = `${detections.length} found`;
+
+    detections.forEach(d => {
+      const tr = document.createElement('tr');
+      const mins = Math.floor(d.timestamp / 60);
+      const secs = Math.floor(d.timestamp % 60);
+      const timeStr = `${mins}:${String(secs).padStart(2,'0')}`;
+      const confPct = Math.round(d.confidence * 100);
+      const barWidth = Math.max(20, confPct * 0.6);
+      const isAnom = d.is_anomaly;
+
+      tr.innerHTML = `
+        <td>${d.frame}</td>
+        <td>${timeStr}</td>
+        <td><span class="label-badge ${isAnom ? 'anomaly' : ''}">${d.label}</span></td>
+        <td><span class="conf-bar" style="width:${barWidth}px;${isAnom ? 'background:var(--red)' : ''}"></span>${confPct}%</td>
+        <td>${isAnom ? '⚠️' : '✓'}</td>
+      `;
+      tr.style.cursor = 'pointer';
+      tr.onclick = () => seekToDetection(d);
+      detectionsBody.appendChild(tr);
+    });
+  }
+
+  function renderTimeline(detections) {
+    // Remove old marks
+    timelineBar.querySelectorAll('.timeline-mark').forEach(m => m.remove());
+
+    if (!detections.length) return;
+
+    const vid = videosMap[currentVideoId];
+    const duration = vid?.duration || 120;
+
+    detections.forEach(d => {
+      const mark = document.createElement('div');
+      const pct = (d.timestamp / duration) * 100;
+      mark.className = `timeline-mark ${d.is_anomaly ? 'anomaly' : 'detection'}`;
+      mark.style.left = `${Math.min(pct, 99.5)}%`;
+      mark.title = `${d.label} @ ${d.timestamp.toFixed(1)}s (${Math.round(d.confidence*100)}%)`;
+      mark.onclick = () => seekToDetection(d);
+      mark.style.pointerEvents = 'auto';
+      timelineBar.appendChild(mark);
+    });
+  }
+
+  function updateStats(detections) {
+    if (!detections.length) {
+      $('#stat-detections').textContent = '—';
+      $('#stat-labels').textContent = '—';
+      $('#stat-anomalies').textContent = '—';
+      $('#stat-confidence').textContent = '—';
+      return;
+    }
+    const labels = new Set(detections.map(d => d.label));
+    const anomalies = detections.filter(d => d.is_anomaly).length;
+    const avgConf = detections.reduce((s, d) => s + d.confidence, 0) / detections.length;
+
+    $('#stat-detections').textContent = detections.length;
+    $('#stat-labels').textContent = labels.size;
+
+    const anomEl = $('#stat-anomalies');
+    anomEl.textContent = anomalies;
+    anomEl.className = 'stat-value' + (anomalies > 2 ? ' danger' : anomalies > 0 ? ' warn' : '');
+
+    $('#stat-confidence').textContent = `${Math.round(avgConf * 100)}%`;
+  }
+
+  function seekToDetection(d) {
+    // For demo mode we don't have actual video files, just update the cursor
+    const vid = videosMap[currentVideoId];
+    const duration = vid?.duration || 120;
+    const pct = (d.timestamp / duration) * 100;
+    timelineCursor.style.left = `${pct}%`;
+
+    // Attempt to seek HTML5 video
+    if (videoPlayer.src && videoPlayer.duration) {
+      videoPlayer.currentTime = d.timestamp;
+    }
+  }
+
+  // ── Summary ────────────────────────────────────────────────────────
+  function renderSummary(summary) {
+    if (!summary || summary.status === 'processing') {
+      summaryText.textContent = 'Processing…';
+      sourceBadge.style.display = 'none';
+      return;
+    }
+    summaryText.textContent = summary.ai_summary || 'No summary available.';
+    if (summary.ai_source) {
+      sourceBadge.textContent = summary.ai_source === 'foundry-local' ? '⚡ Foundry Local' : '🔄 Demo Generated';
+      sourceBadge.style.display = 'inline-block';
+    }
+  }
+
+  // ── File upload ────────────────────────────────────────────────────
+  dropArea.onclick = () => fileInput.click();
+  dropArea.addEventListener('dragover', (e) => { e.preventDefault(); dropArea.classList.add('drag-over'); });
+  dropArea.addEventListener('dragleave', () => dropArea.classList.remove('drag-over'));
+  dropArea.addEventListener('drop', (e) => {
+    e.preventDefault(); dropArea.classList.remove('drag-over');
+    const files = e.dataTransfer.files;
+    if (files.length) uploadFile(files[0]);
+  });
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files.length) uploadFile(fileInput.files[0]);
+    fileInput.value = '';
+  });
+
+  async function uploadFile(file) {
+    if (!file.name.toLowerCase().endsWith('.mp4')) {
+      alert('Only MP4 files are supported.');
+      return;
+    }
+    dropArea.innerHTML = '<span class="spinner"></span> Uploading…';
+    const form = new FormData();
+    form.append('file', file);
+    try {
+      const resp = await fetch('/api/upload', { method: 'POST', body: form });
+      const data = await resp.json();
+      if (resp.ok) {
+        dropArea.innerHTML = '✅ Uploaded — processing…';
+        setTimeout(() => { dropArea.innerHTML = '📁 Drop MP4 here or <strong>click to browse</strong>'; }, 3000);
+      } else {
+        dropArea.innerHTML = `❌ ${data.error || 'Upload failed'}`;
+        setTimeout(() => { dropArea.innerHTML = '📁 Drop MP4 here or <strong>click to browse</strong>'; }, 3000);
+      }
+    } catch(e) {
+      dropArea.innerHTML = '❌ Upload error';
+      setTimeout(() => { dropArea.innerHTML = '📁 Drop MP4 here or <strong>click to browse</strong>'; }, 3000);
+    }
+  }
+
+  // ── NL Query ───────────────────────────────────────────────────────
+  queryBtn.onclick = sendQuery;
+  queryInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendQuery(); });
+
+  async function sendQuery() {
+    const q = queryInput.value.trim();
+    if (!q || !currentVideoId) return;
+
+    queryResponse.innerHTML = '<span class="spinner"></span> Thinking…';
+    queryInput.disabled = true;
+    queryBtn.disabled = true;
+
+    try {
+      const resp = await fetch(`/api/videos/${currentVideoId}/query`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: q }),
+      });
+      const data = await resp.json();
+      queryResponse.textContent = data.answer || 'No response.';
+    } catch(e) {
+      queryResponse.textContent = '⚠️ Query failed. Try again.';
+    }
+    queryInput.disabled = false;
+    queryBtn.disabled = false;
+    queryInput.value = '';
+    queryInput.focus();
+  }
+
+  // ── Export ──────────────────────────────────────────────────────────
+  window.exportData = async function(format) {
+    if (!currentVideoId) return;
+
+    if (format === 'geojson') {
+      const resp = await fetch(`/api/videos/${currentVideoId}/geojson`);
+      const data = await resp.json();
+      downloadJSON(data, `${currentVideoId}-detections.geojson`);
+    } else if (format === 'json') {
+      const resp = await fetch(`/api/videos/${currentVideoId}/detections`);
+      const data = await resp.json();
+      downloadJSON(data, `${currentVideoId}-detections.json`);
+    } else if (format === 'csv') {
+      if (!currentDetections.length) return;
+      const headers = ['frame','timestamp','label','confidence','is_anomaly','lat','lng','alt_m'];
+      const rows = currentDetections.map(d =>
+        [d.frame, d.timestamp, d.label, d.confidence, d.is_anomaly,
+         d.geo?.lat||'', d.geo?.lng||'', d.geo?.alt_m||''].join(',')
+      );
+      const csv = [headers.join(','), ...rows].join('\n');
+      downloadText(csv, `${currentVideoId}-detections.csv`, 'text/csv');
+    }
+  };
+
+  function downloadJSON(data, filename) {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    triggerDownload(blob, filename);
+  }
+
+  function downloadText(text, filename, mime) {
+    const blob = new Blob([text], { type: mime });
+    triggerDownload(blob, filename);
+  }
+
+  function triggerDownload(blob, filename) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  // ── Video time tracking for overlay ────────────────────────────────
+  videoPlayer.addEventListener('timeupdate', () => {
+    const vid = videosMap[currentVideoId];
+    if (!vid) return;
+    const duration = videoPlayer.duration || vid.duration || 120;
+    const pct = (videoPlayer.currentTime / duration) * 100;
+    timelineCursor.style.left = `${pct}%`;
+  });
+
+})();
+</script>
+</body>
+</html>
