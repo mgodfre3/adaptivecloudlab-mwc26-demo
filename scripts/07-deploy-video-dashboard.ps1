@@ -32,7 +32,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-$env:AZURE_EXTENSION_DIR = "$env:TEMP\az_extensions"
+$env:AZURE_EXTENSION_DIR = "$env:USERPROFILE\.azure\cliext-vi"
 
 # ── Locate & parse env file ──────────────────────────────────────────────────
 if (-not $EnvFile) {
@@ -101,7 +101,7 @@ Write-Host "  Rendered k8s/video-dashboard.yaml"
 # ── Step 1: ACR Login ────────────────────────────────────────────────────────
 if (-not $SkipBuild) {
     Write-Host "`n[1/7] Logging into ACR ($AcrName)..." -ForegroundColor Yellow
-    az.cmd acr login --name $AcrName 2>&1
+    az acr login --name $AcrName 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Host "WARNING: ACR login failed — falling back to az acr build (no local Docker needed)" -ForegroundColor DarkYellow
     }
@@ -109,7 +109,7 @@ if (-not $SkipBuild) {
     # ── Step 2: Build & Push Video Dashboard ──────────────────────────────────
     Write-Host "`n[2/7] Building video-dashboard image via ACR..." -ForegroundColor Yellow
     $dashImg = "drone-demo/video-dashboard:$Tag"
-    az.cmd acr build --registry $AcrName --image $dashImg "$root\dashboard"
+    az acr build --registry $AcrName --image $dashImg "$root\video-dashboard"
     if ($LASTEXITCODE -ne 0) { Write-Host "ERROR: Video dashboard build failed" -ForegroundColor Red; exit 1 }
 
     # ── Step 3: Build & Push CV Inference ─────────────────────────────────────
@@ -117,7 +117,7 @@ if (-not $SkipBuild) {
     $cvImg = "drone-demo/cv-inference:$Tag"
     $cvDir = "$root\cv-inference"
     if (Test-Path $cvDir) {
-        az.cmd acr build --registry $AcrName --image $cvImg "$cvDir"
+        az acr build --registry $AcrName --image $cvImg "$cvDir"
         if ($LASTEXITCODE -ne 0) { Write-Host "ERROR: CV inference build failed" -ForegroundColor Red; exit 1 }
     } else {
         Write-Host "  ⚠️  cv-inference/ directory not found — skipping CV build" -ForegroundColor Yellow
