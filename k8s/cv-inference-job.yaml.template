@@ -1,0 +1,70 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cv-inference-${JOB_ID}
+  namespace: drone-demo
+  labels:
+    app: cv-inference
+    component: yolov8-antenna-detection
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app: cv-inference
+    spec:
+      restartPolicy: Never
+
+      nodeSelector:
+        accelerator: nvidia-a2
+
+      tolerations:
+        - key: "nvidia.com/gpu"
+          operator: "Exists"
+          effect: "NoSchedule"
+
+      containers:
+        - name: cv-inference
+          image: ${ACR_LOGIN_SERVER}/drone-demo/cv-inference:latest
+          args:
+            - "--input"
+            - "/data/input/${VIDEO_FILE}"
+            - "--output-dir"
+            - "/data/output/${JOB_ID}"
+            - "--model"
+            - "/models/yolov8s-antenna.onnx"
+            - "--confidence"
+            - "${CONFIDENCE_THRESHOLD:-0.5}"
+            - "--annotate"
+          resources:
+            requests:
+              cpu: "2"
+              memory: "4Gi"
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "4"
+              memory: "4Gi"
+              nvidia.com/gpu: "1"
+
+          volumeMounts:
+            - name: drone-video
+              mountPath: /data
+            - name: model-store
+              mountPath: /models
+              readOnly: true
+
+          env:
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: "all"
+            - name: ORT_TENSORRT_CACHE_PATH
+              value: "/models/cache"
+
+      volumes:
+        - name: drone-video
+          persistentVolumeClaim:
+            claimName: drone-video-pvc
+        - name: model-store
+          persistentVolumeClaim:
+            claimName: model-store-pvc
+            readOnly: true

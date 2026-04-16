@@ -1,0 +1,5 @@
+# YOLOv8 Antenna Detection — Class Names
+# Used by: cv-inference pipeline
+names:
+  0: cellular_antenna
+nc: 1
