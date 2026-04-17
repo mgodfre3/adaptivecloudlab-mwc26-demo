@@ -407,6 +407,9 @@
       videoPlayer.style.display = 'block';
     }
 
+    // Clear overlay from previous video
+    overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+
     // Update pipeline display
     updatePipeline(vid.pipeline || {});
 
@@ -538,16 +541,16 @@
   }
 
   function seekToDetection(d) {
-    // For demo mode we don't have actual video files, just update the cursor
     const vid = videosMap[currentVideoId];
     const duration = vid?.duration || 120;
     const pct = (d.timestamp / duration) * 100;
     timelineCursor.style.left = `${pct}%`;
 
-    // Attempt to seek HTML5 video
+    // Seek HTML5 video and draw overlay at that time
     if (videoPlayer.src && videoPlayer.duration) {
       videoPlayer.currentTime = d.timestamp;
     }
+    drawDetections(d.timestamp);
   }
 
   // ── Summary ────────────────────────────────────────────────────────
@@ -739,12 +742,106 @@
   }
 
   // ── Video time tracking for overlay ────────────────────────────────
+  const overlayCtx = overlay.getContext('2d');
+  let overlayEnabled = true;
+  const DETECTION_WINDOW = 1.0; // seconds: show detections within ±1s of playhead
+
+  function resizeOverlay() {
+    const rect = videoPlayer.getBoundingClientRect();
+    overlay.width = rect.width * (window.devicePixelRatio || 1);
+    overlay.height = rect.height * (window.devicePixelRatio || 1);
+    overlay.style.width = rect.width + 'px';
+    overlay.style.height = rect.height + 'px';
+    overlayCtx.setTransform(window.devicePixelRatio || 1, 0, 0, window.devicePixelRatio || 1, 0, 0);
+  }
+
+  // Compute the actual video-frame rect inside the <video> element (object-fit: contain)
+  function getVideoRect() {
+    const vw = videoPlayer.videoWidth || 1;
+    const vh = videoPlayer.videoHeight || 1;
+    const cw = parseFloat(overlay.style.width) || videoPlayer.clientWidth;
+    const ch = parseFloat(overlay.style.height) || videoPlayer.clientHeight;
+    const scale = Math.min(cw / vw, ch / vh);
+    const rw = vw * scale;
+    const rh = vh * scale;
+    return { x: (cw - rw) / 2, y: (ch - rh) / 2, w: rw, h: rh };
+  }
+
+  function drawDetections(currentTime) {
+    overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+    if (!overlayEnabled || !currentDetections.length) return;
+
+    const vid = videosMap[currentVideoId];
+    if (!vid) return;
+
+    const vRect = getVideoRect();
+    const nearby = currentDetections.filter(d =>
+      Math.abs(d.timestamp - currentTime) <= DETECTION_WINDOW && d.bbox
+    );
+
+    nearby.forEach(d => {
+      const b = d.bbox;
+      const bx = vRect.x + b.x * vRect.w;
+      const by = vRect.y + b.y * vRect.h;
+      const bw = b.w * vRect.w;
+      const bh = b.h * vRect.h;
+
+      const isAnomaly = d.is_anomaly;
+      const color = isAnomaly ? '#ef4444' : '#00e5ff';
+      const confPct = Math.round(d.confidence * 100);
+
+      // Box
+      overlayCtx.strokeStyle = color;
+      overlayCtx.lineWidth = 2;
+      overlayCtx.strokeRect(bx, by, bw, bh);
+
+      // Corner accents
+      const corner = Math.min(bw, bh) * 0.2;
+      overlayCtx.lineWidth = 3;
+      // top-left
+      overlayCtx.beginPath();
+      overlayCtx.moveTo(bx, by + corner); overlayCtx.lineTo(bx, by); overlayCtx.lineTo(bx + corner, by);
+      overlayCtx.stroke();
+      // top-right
+      overlayCtx.beginPath();
+      overlayCtx.moveTo(bx + bw - corner, by); overlayCtx.lineTo(bx + bw, by); overlayCtx.lineTo(bx + bw, by + corner);
+      overlayCtx.stroke();
+      // bottom-left
+      overlayCtx.beginPath();
+      overlayCtx.moveTo(bx, by + bh - corner); overlayCtx.lineTo(bx, by + bh); overlayCtx.lineTo(bx + corner, by + bh);
+      overlayCtx.stroke();
+      // bottom-right
+      overlayCtx.beginPath();
+      overlayCtx.moveTo(bx + bw - corner, by + bh); overlayCtx.lineTo(bx + bw, by + bh); overlayCtx.lineTo(bx + bw, by + bh - corner);
+      overlayCtx.stroke();
+
+      // Label background
+      const label = `${d.label} ${confPct}%`;
+      overlayCtx.font = '600 11px Inter, sans-serif';
+      const tm = overlayCtx.measureText(label);
+      const lw = tm.width + 10;
+      const lh = 18;
+      overlayCtx.fillStyle = color;
+      overlayCtx.fillRect(bx, by - lh - 2, lw, lh);
+
+      // Label text
+      overlayCtx.fillStyle = isAnomaly ? '#fff' : '#000';
+      overlayCtx.fillText(label, bx + 5, by - 6);
+    });
+  }
+
+  // Resize canvas when video metadata loads or window resizes
+  videoPlayer.addEventListener('loadedmetadata', resizeOverlay);
+  window.addEventListener('resize', () => { resizeOverlay(); drawDetections(videoPlayer.currentTime || 0); });
+  new ResizeObserver(() => { resizeOverlay(); drawDetections(videoPlayer.currentTime || 0); }).observe(videoPlayer);
+
   videoPlayer.addEventListener('timeupdate', () => {
     const vid = videosMap[currentVideoId];
     if (!vid) return;
     const duration = videoPlayer.duration || vid.duration || 120;
     const pct = (videoPlayer.currentTime / duration) * 100;
     timelineCursor.style.left = `${pct}%`;
+    drawDetections(videoPlayer.currentTime);
   });
 
 })();
