@@ -50,11 +50,11 @@ spec:
   replicas: 1
   resources:
     requests:
-      cpu: "1"
-      memory: "4Gi"
+      cpu: 500m
+      memory: "2Gi"
     limits:
-      cpu: "3"
-      memory: "5Gi"
+      cpu: "2"
+      memory: "3Gi"
       gpu: 1
   authentication:
     enabled: true

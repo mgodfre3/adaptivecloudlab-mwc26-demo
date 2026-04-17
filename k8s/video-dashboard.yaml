@@ -29,7 +29,7 @@ metadata:
   namespace: video-analysis
 data:
   DASHBOARD_PORT: "5000"
-  EDGE_AI_ENDPOINT: "https://phi-4-deployment.vi-foundry-mdl.svc:5000"
+  EDGE_AI_ENDPOINT: "https://phi-4-deployment.vi-foundry-local.svc:5000"
   EDGE_AI_MODEL: "Phi-4-mini-instruct"
   VI_ENDPOINT: "http://videoindexer.video-analysis.svc:80"
   DATA_DIR: "/data"
