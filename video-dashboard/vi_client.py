@@ -135,12 +135,25 @@ class VideoIndexerClient:
                 return resp.json()
 
     def get_video(self, video_id: str) -> dict:
-        """Get video metadata including state and progress."""
+        """Get video metadata including state and progress.
+
+        The Arc VI API may return 404 on /Videos/{id} while /Videos/{id}/Index
+        works. We try the direct endpoint first, then fall back to Index.
+        """
         url = self._api_url(f"Videos/{video_id}")
         with httpx.Client(timeout=30.0) as client:
             resp = client.get(url, headers=self._headers())
-            resp.raise_for_status()
-            return resp.json()
+            if resp.status_code == 200:
+                return resp.json()
+
+        # Fallback: use Index endpoint which reliably works on Arc VI
+        index_data = self.get_video_index(video_id)
+        return {
+            "id": index_data.get("id", video_id),
+            "name": index_data.get("name", ""),
+            "state": index_data.get("state", "Unknown"),
+            "processingProgress": "100%" if index_data.get("state") == "Processed" else "0%",
+        }
 
     def get_video_index(self, video_id: str) -> dict:
         """Get full video index with all insights."""
