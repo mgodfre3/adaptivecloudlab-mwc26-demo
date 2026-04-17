@@ -4,24 +4,33 @@ Video Analysis Dashboard — Drone CV + Arc Video Indexer
 Flask + Socket.IO server that:
   1. Accepts MP4 uploads from drone flights
   2. Runs CV inference for object detection (or generates demo data)
-  3. Integrates with Arc Video Indexer for scene understanding
+  3. Submits video to Arc Video Indexer for scene understanding
   4. Calls Foundry Local (Phi-4) for NL summaries of detections
   5. Pushes real-time processing updates via WebSocket
 
-Env vars (set in video-dashboard/.env):
+Env vars (set via K8s secrets / configmap):
   DASHBOARD_PORT       – web server port (default 5000)
   EDGE_AI_ENDPOINT     – Foundry Local URL
   EDGE_AI_MODEL        – model name (default Phi-4-mini-instruct)
   EDGE_AI_API_KEY      – Foundry Local API key
-  VI_ENDPOINT          – Arc Video Indexer API endpoint
+  VI_ACCOUNT_ID        – Video Indexer account UUID
+  VI_ACCOUNT_NAME      – VI account name (e.g. AC-VI)
+  VI_RESOURCE_GROUP    – VI resource group
+  VI_SUBSCRIPTION_ID   – Azure subscription ID
+  VI_LOCATION          – VI location (e.g. eastus)
+  AZURE_TENANT_ID      – SP tenant
+  AZURE_CLIENT_ID      – SP app ID
+  AZURE_CLIENT_SECRET  – SP password
   DATA_DIR             – upload / artifact storage (default /data)
   FLASK_SECRET_KEY     – Flask session secret
 """
 
 import json
+import logging
 import os
 import random
 import secrets
+import sqlite3
 import threading
 import time
 import uuid
@@ -33,6 +42,8 @@ from dotenv import load_dotenv
 from flask import Flask, render_template, jsonify, request, send_from_directory
 from flask_socketio import SocketIO
 
+from vi_client import VideoIndexerClient
+
 # ── Load config ──────────────────────────────────────────────────────────────
 _here = Path(__file__).resolve().parent
 _env_path = _here / ".env"
@@ -43,7 +54,6 @@ PORT = int(os.getenv("DASHBOARD_PORT", "5000"))
 EDGE_AI_ENDPOINT = os.getenv("EDGE_AI_ENDPOINT", "https://localhost:8443")
 EDGE_AI_MODEL = os.getenv("EDGE_AI_MODEL", "Phi-4-mini-instruct")
 EDGE_AI_API_KEY = os.getenv("EDGE_AI_API_KEY", "")
-VI_ENDPOINT = os.getenv("VI_ENDPOINT", "http://video-indexer.video-indexer.svc:5000")
 DATA_DIR = Path(os.getenv("DATA_DIR", "/data"))
 FLASK_SECRET = os.getenv("FLASK_SECRET_KEY", secrets.token_hex(32))
 
@@ -54,10 +64,48 @@ app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024  # 2 GB upload limit
 
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
+# ── Video Indexer client ─────────────────────────────────────────────────────
+vi_client = VideoIndexerClient()
+
 # ── In-memory video store ────────────────────────────────────────────────────
 # video_id -> { id, filename, status, uploaded_at, detections, summary, ... }
 videos: dict[str, dict] = {}
 videos_lock = threading.Lock()
+
+# ── SQLite for persistent VI state ───────────────────────────────────────────
+DB_PATH = DATA_DIR / "vi_state.db"
+
+
+def _init_db():
+    """Create the persistent state database."""
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS vi_videos (
+            local_id    TEXT PRIMARY KEY,
+            vi_video_id TEXT,
+            filename    TEXT,
+            file_path   TEXT,
+            video_url   TEXT,
+            vi_state    TEXT DEFAULT 'pending',
+            vi_progress TEXT DEFAULT '0%',
+            vi_insights TEXT,
+            vi_summary  TEXT,
+            summary_id  TEXT,
+            error       TEXT,
+            created_at  TEXT,
+            updated_at  TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def _db():
+    """Get a DB connection (one per thread)."""
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.row_factory = sqlite3.Row
+    return conn
 
 # ── Ensure data directories ─────────────────────────────────────────────────
 UPLOAD_DIR = DATA_DIR / "uploads"
@@ -281,13 +329,11 @@ def _check_foundry_local() -> bool:
 
 
 def _check_video_indexer() -> bool:
-    """Health-check the Arc Video Indexer endpoint."""
-    if not VI_ENDPOINT:
+    """Health-check the Video Indexer via cloud API."""
+    if not vi_client.configured:
         return False
     try:
-        with httpx.Client(verify=False, timeout=5.0) as client:
-            resp = client.get(f"{VI_ENDPOINT.rstrip('/')}/health")
-            return resp.status_code == 200
+        return vi_client.health_check()
     except Exception:
         return False
 
@@ -311,14 +357,14 @@ def _process_video(video_id: str):
     if not vid:
         return
 
-    # ── Step 1: CV Inference ─────────────────────────────────────────────
+    file_path = vid.get("file_path")
+
+    # ── Step 1: CV Inference (demo detections) ────────────────────────
     _update_pipeline(video_id, "cv_inference", "running")
     socketio.emit("processing_update", {"id": video_id, "step": "cv_inference", "status": "running"})
 
-    # Simulate inference time (2-4 seconds for demo)
     time.sleep(random.uniform(2.0, 4.0))
 
-    # Generate demo detections
     cfg = {
         "filename": vid["filename"],
         "duration": vid.get("duration") or random.uniform(60, 240),
@@ -340,29 +386,154 @@ def _process_video(video_id: str):
         "status": "complete",
     })
 
-    # ── Step 2: Video Indexer ────────────────────────────────────────────
+    # ── Step 2: Video Indexer (real upload + polling) ─────────────────
     _update_pipeline(video_id, "vi_indexing", "running")
     socketio.emit("processing_update", {"id": video_id, "step": "vi_indexing", "status": "running"})
 
-    time.sleep(random.uniform(1.5, 3.0))
+    vi_success = False
+    vi_insights = None
 
-    _update_pipeline(video_id, "vi_indexing", "complete")
-    socketio.emit("indexing_complete", {"id": video_id, "step": "vi_indexing", "status": "complete"})
+    if vi_client.configured and file_path:
+        try:
+            app.logger.info("[%s] Uploading to Video Indexer...", video_id)
+            upload_result = vi_client.upload_video(
+                file_path=file_path,
+                name=vid["filename"],
+                description=f"Drone flight upload {video_id}",
+            )
+            vi_video_id = upload_result.get("id")
+            app.logger.info("[%s] VI upload started: vi_id=%s", video_id, vi_video_id)
 
-    # ── Step 3: AI Summary ───────────────────────────────────────────────
+            # Persist VI mapping
+            conn = _db()
+            conn.execute(
+                "UPDATE vi_videos SET vi_video_id=?, vi_state='uploading', updated_at=? WHERE local_id=?",
+                (vi_video_id, datetime.now(timezone.utc).isoformat(), video_id),
+            )
+            conn.commit()
+            conn.close()
+
+            with videos_lock:
+                videos[video_id]["vi_video_id"] = vi_video_id
+
+            # Poll for completion
+            for attempt in range(180):  # up to 30 min
+                time.sleep(10)
+                try:
+                    status = vi_client.get_video(vi_video_id)
+                    state = status.get("state", "Unknown")
+                    progress = status.get("processingProgress", "0%")
+
+                    app.logger.info("[%s] VI progress: %s (%s)", video_id, progress, state)
+                    socketio.emit("vi_progress", {
+                        "id": video_id,
+                        "progress": progress,
+                        "state": state,
+                    })
+
+                    # Persist progress
+                    conn = _db()
+                    conn.execute(
+                        "UPDATE vi_videos SET vi_state=?, vi_progress=?, updated_at=? WHERE local_id=?",
+                        (state, progress, datetime.now(timezone.utc).isoformat(), video_id),
+                    )
+                    conn.commit()
+                    conn.close()
+
+                    if state == "Processed":
+                        vi_success = True
+                        break
+                    elif state in ("Failed", "Error"):
+                        app.logger.error("[%s] VI processing failed: %s", video_id, state)
+                        break
+                except Exception as poll_exc:
+                    app.logger.warning("[%s] VI poll error: %s", video_id, poll_exc)
+
+            # Fetch insights if processing succeeded
+            if vi_success:
+                try:
+                    vi_insights = vi_client.get_video_index(vi_video_id)
+                    conn = _db()
+                    conn.execute(
+                        "UPDATE vi_videos SET vi_state='Processed', vi_insights=?, updated_at=? WHERE local_id=?",
+                        (json.dumps(vi_insights), datetime.now(timezone.utc).isoformat(), video_id),
+                    )
+                    conn.commit()
+                    conn.close()
+                    app.logger.info("[%s] VI insights retrieved", video_id)
+                except Exception as idx_exc:
+                    app.logger.warning("[%s] Failed to get VI insights: %s", video_id, idx_exc)
+
+        except Exception as vi_exc:
+            app.logger.error("[%s] VI upload failed: %s", video_id, vi_exc)
+            conn = _db()
+            conn.execute(
+                "UPDATE vi_videos SET vi_state='Failed', error=?, updated_at=? WHERE local_id=?",
+                (str(vi_exc), datetime.now(timezone.utc).isoformat(), video_id),
+            )
+            conn.commit()
+            conn.close()
+    else:
+        app.logger.info("[%s] VI not configured — skipping indexing", video_id)
+        time.sleep(random.uniform(1.5, 3.0))
+
+    _update_pipeline(video_id, "vi_indexing", "complete" if vi_success or not vi_client.configured else "failed")
+    socketio.emit("indexing_complete", {
+        "id": video_id,
+        "step": "vi_indexing",
+        "status": "complete" if vi_success else "skipped",
+        "has_insights": vi_insights is not None,
+    })
+
+    # Store VI insights in memory
+    with videos_lock:
+        videos[video_id]["vi_insights"] = vi_insights
+
+    # ── Step 3: AI Summary ───────────────────────────────────────────
     _update_pipeline(video_id, "ai_summary", "running")
     socketio.emit("processing_update", {"id": video_id, "step": "ai_summary", "status": "running"})
 
     summary = _generate_summary(cfg, detections)
 
-    # Try Foundry Local for a real AI summary
+    # Enrich summary with real VI insights if available
+    if vi_insights:
+        vi_videos = vi_insights.get("videos", [{}])
+        if vi_videos:
+            vi_inner = vi_videos[0].get("insights", {})
+            summary["vi_insights"] = {
+                "transcript": _extract_transcript(vi_inner),
+                "topics": [t.get("name", "") for t in vi_inner.get("topics", [])],
+                "labels": [l.get("name", "") for l in vi_inner.get("labels", [])],
+                "keywords": [k.get("name", "") for k in vi_inner.get("keywords", [])],
+                "faces_count": len(vi_inner.get("faces", [])),
+                "scenes_count": len(vi_inner.get("scenes", [])),
+                "shots_count": len(vi_inner.get("shots", [])),
+                "ocr_texts": [o.get("text", "") for o in vi_inner.get("ocr", [])],
+                "emotions": [e.get("type", "") for e in vi_inner.get("emotions", [])],
+                "source": "arc-video-indexer",
+            }
+
+    # Try Foundry Local for AI summary
     detection_text = json.dumps(
         [{"label": d["label"], "confidence": d["confidence"],
           "is_anomaly": d["is_anomaly"], "timestamp": d["timestamp"]} for d in detections],
         indent=2,
     )
+
+    vi_context = ""
+    if vi_insights:
+        vi_summary_data = summary.get("vi_insights", {})
+        vi_context = (
+            f"\nVideo Indexer Analysis:\n"
+            f"- Topics: {', '.join(vi_summary_data.get('topics', []))}\n"
+            f"- Labels: {', '.join(vi_summary_data.get('labels', []))}\n"
+            f"- Keywords: {', '.join(vi_summary_data.get('keywords', []))}\n"
+            f"- Scenes: {vi_summary_data.get('scenes_count', 0)}, Shots: {vi_summary_data.get('shots_count', 0)}\n"
+            f"- Faces detected: {vi_summary_data.get('faces_count', 0)}\n"
+        )
+
     ai_response = _call_foundry_local(
-        f"Analyze these drone flight detections and provide a summary:\n{detection_text}",
+        f"Analyze these drone flight detections and provide a summary:\n{detection_text}{vi_context}",
         system=SYSTEM_PROMPT,
     )
     if ai_response:
@@ -384,6 +555,12 @@ def _process_video(video_id: str):
         "step": "ai_summary",
         "status": "complete",
     })
+
+
+def _extract_transcript(insights: dict) -> str:
+    """Extract full transcript text from VI insights."""
+    transcript = insights.get("transcript", [])
+    return " ".join(t.get("text", "") for t in transcript).strip()
 
 
 def _update_pipeline(video_id: str, step: str, status: str):
@@ -417,17 +594,30 @@ def upload_video():
     f.save(str(dest))
 
     video_url = f"/data/uploads/{safe_name}"
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Persist to SQLite
+    conn = _db()
+    conn.execute(
+        "INSERT INTO vi_videos (local_id, filename, file_path, video_url, created_at, updated_at) VALUES (?,?,?,?,?,?)",
+        (video_id, f.filename, str(dest), video_url, now, now),
+    )
+    conn.commit()
+    conn.close()
 
     with videos_lock:
         videos[video_id] = {
             "id": video_id,
             "filename": f.filename,
+            "file_path": str(dest),
             "video_url": video_url,
             "status": "processing",
-            "uploaded_at": datetime.now(timezone.utc).isoformat(),
+            "uploaded_at": now,
             "duration": None,
             "detections": [],
             "summary": None,
+            "vi_video_id": None,
+            "vi_insights": None,
             "pipeline": {
                 "upload": "complete",
                 "cv_inference": "pending",
@@ -591,9 +781,36 @@ def ai_status():
     vi_ok = _check_video_indexer()
     return jsonify({
         "foundry_local": {"status": "healthy" if fl_ok else "unavailable", "endpoint": EDGE_AI_ENDPOINT},
-        "video_indexer": {"status": "healthy" if vi_ok else "unavailable", "endpoint": VI_ENDPOINT},
+        "video_indexer": {
+            "status": "healthy" if vi_ok else "unavailable",
+            "configured": vi_client.configured,
+            "account_id": vi_client.account_id,
+            "location": vi_client.location,
+        },
         "demo_mode": not fl_ok,
     })
+
+
+@app.route("/api/videos/<video_id>/vi-insights")
+def get_vi_insights(video_id: str):
+    """Get Video Indexer insights for a video."""
+    with videos_lock:
+        vid = videos.get(video_id)
+    if not vid:
+        return jsonify({"error": "Video not found"}), 404
+
+    vi_insights = vid.get("vi_insights")
+    if vi_insights:
+        return jsonify(vi_insights)
+
+    # Try loading from DB
+    conn = _db()
+    row = conn.execute("SELECT vi_insights FROM vi_videos WHERE local_id=?", (video_id,)).fetchone()
+    conn.close()
+    if row and row["vi_insights"]:
+        return jsonify(json.loads(row["vi_insights"]))
+
+    return jsonify({"status": "not_available"}), 404
 
 
 # ── Serve uploaded files for playback ────────────────────────────────────────
@@ -622,8 +839,47 @@ def handle_connect():
 #  Main
 # ═════════════════════════════════════════════════════════════════════════════
 
+def _restore_from_db():
+    """Restore completed videos from SQLite on startup."""
+    try:
+        conn = _db()
+        rows = conn.execute("SELECT * FROM vi_videos").fetchall()
+        conn.close()
+        for row in rows:
+            vid_id = row["local_id"]
+            if vid_id not in videos:
+                vi_insights = json.loads(row["vi_insights"]) if row["vi_insights"] else None
+                with videos_lock:
+                    videos[vid_id] = {
+                        "id": vid_id,
+                        "filename": row["filename"],
+                        "file_path": row["file_path"],
+                        "video_url": row["video_url"],
+                        "status": "complete" if row["vi_state"] == "Processed" else "processing",
+                        "uploaded_at": row["created_at"],
+                        "duration": None,
+                        "detections": [],
+                        "summary": None,
+                        "vi_video_id": row["vi_video_id"],
+                        "vi_insights": vi_insights,
+                        "pipeline": {
+                            "upload": "complete",
+                            "cv_inference": "complete",
+                            "vi_indexing": "complete" if row["vi_state"] == "Processed" else "pending",
+                            "ai_summary": "complete" if row["vi_state"] == "Processed" else "pending",
+                        },
+                    }
+        app.logger.info("Restored %d videos from database", len(rows))
+    except Exception as exc:
+        app.logger.warning("Failed to restore from DB: %s", exc)
+
+
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    _init_db()
+    _restore_from_db()
     _seed_demo_videos()
     app.logger.info("Video Analysis Dashboard starting on port %d", PORT)
+    app.logger.info("VI configured: %s (account: %s)", vi_client.configured, vi_client.account_id)
     app.logger.info("Demo videos seeded: %d", len(videos))
     socketio.run(app, host="0.0.0.0", port=PORT, debug=False, allow_unsafe_werkzeug=True)

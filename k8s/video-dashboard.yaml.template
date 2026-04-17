@@ -82,6 +82,9 @@ spec:
                 name: video-dashboard-config
             - secretRef:
                 name: video-dashboard-secrets
+            - secretRef:
+                name: vi-sp-credentials
+                optional: true
           volumeMounts:
             - name: video-data
               mountPath: /data

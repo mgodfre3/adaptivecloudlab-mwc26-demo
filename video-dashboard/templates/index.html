@@ -145,6 +145,33 @@
       </div>
     </div>
 
+    <!-- Video Indexer Insights -->
+    <div class="card" id="vi-insights-card" style="display:none;">
+      <div class="card-header">
+        <h2><span class="icon">🎞️</span> Video Indexer Insights <small style="color:var(--accent);font-weight:400;">Arc-Enabled</small></h2>
+      </div>
+      <div class="card-body" style="padding:14px 18px;">
+        <div id="vi-insights-content">
+          <div id="vi-progress-bar" style="display:none;">
+            <div style="margin-bottom:6px;font-size:12px;color:var(--text-dim);">Processing: <span id="vi-progress-text">0%</span></div>
+            <div style="height:6px;background:var(--bg-card);border-radius:3px;overflow:hidden;">
+              <div id="vi-progress-fill" style="height:100%;width:0%;background:var(--accent);transition:width 0.5s;border-radius:3px;"></div>
+            </div>
+          </div>
+          <div id="vi-insights-grid" style="display:none;">
+            <div class="vi-insight-row"><span class="vi-label">📊 Scenes</span><span id="vi-scenes" class="vi-value">—</span></div>
+            <div class="vi-insight-row"><span class="vi-label">🎬 Shots</span><span id="vi-shots" class="vi-value">—</span></div>
+            <div class="vi-insight-row"><span class="vi-label">👤 Faces</span><span id="vi-faces" class="vi-value">—</span></div>
+            <div class="vi-insight-row"><span class="vi-label">🏷️ Labels</span><span id="vi-labels" class="vi-value">—</span></div>
+            <div class="vi-insight-row"><span class="vi-label">🔑 Keywords</span><span id="vi-keywords" class="vi-value">—</span></div>
+            <div class="vi-insight-row"><span class="vi-label">💬 Topics</span><span id="vi-topics" class="vi-value">—</span></div>
+            <div class="vi-insight-row"><span class="vi-label">📝 OCR Text</span><span id="vi-ocr" class="vi-value">—</span></div>
+            <div class="vi-insight-row"><span class="vi-label">📜 Transcript</span><span id="vi-transcript" class="vi-value" style="max-height:80px;overflow-y:auto;">—</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Detections table -->
     <div class="card flex-grow" id="detections-card">
       <div class="card-header">
@@ -286,9 +313,18 @@
 
   socket.on('indexing_complete', (data) => {
     if (videosMap[data.id]) {
-      videosMap[data.id].pipeline = { ...videosMap[data.id].pipeline, vi_indexing: 'complete' };
+      videosMap[data.id].pipeline = { ...videosMap[data.id].pipeline, vi_indexing: data.status === 'complete' ? 'complete' : 'failed' };
     }
-    if (currentVideoId === data.id) updatePipeline(videosMap[data.id]?.pipeline || {});
+    if (currentVideoId === data.id) {
+      updatePipeline(videosMap[data.id]?.pipeline || {});
+      if (data.has_insights) loadViInsights(data.id);
+    }
+  });
+
+  socket.on('vi_progress', (data) => {
+    if (currentVideoId === data.id) {
+      showViProgress(data.progress, data.state);
+    }
   });
 
   socket.on('analysis_complete', (data) => {
@@ -385,9 +421,12 @@
         vid.summary = summary;
         renderSummary(summary);
       } catch(e) { console.error(e); }
+      // Load VI insights
+      loadViInsights(id);
     } else {
       summaryText.textContent = 'Processing in progress…';
       sourceBadge.style.display = 'none';
+      hideViInsights();
     }
   }
 
@@ -523,6 +562,71 @@
       sourceBadge.textContent = summary.ai_source === 'foundry-local' ? '⚡ Foundry Local' : '🔄 Demo Generated';
       sourceBadge.style.display = 'inline-block';
     }
+    // Show VI insights from summary if available
+    if (summary.vi_insights && summary.vi_insights.source === 'arc-video-indexer') {
+      renderViInsightsData(summary.vi_insights);
+    }
+  }
+
+  // ── Video Indexer Insights ────────────────────────────────────────
+  function showViProgress(progress, state) {
+    const card = $('#vi-insights-card');
+    const bar = $('#vi-progress-bar');
+    const grid = $('#vi-insights-grid');
+    card.style.display = 'block';
+    bar.style.display = 'block';
+    grid.style.display = 'none';
+
+    const pctText = $('#vi-progress-text');
+    const pctFill = $('#vi-progress-fill');
+    pctText.textContent = `${progress} (${state})`;
+    const pctNum = parseInt(progress) || 0;
+    pctFill.style.width = `${pctNum}%`;
+  }
+
+  async function loadViInsights(id) {
+    try {
+      const resp = await fetch(`/api/videos/${id}/vi-insights`);
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const videos = data.videos || [];
+      if (videos.length > 0) {
+        const insights = videos[0].insights || {};
+        renderViInsightsData({
+          scenes_count: (insights.scenes || []).length,
+          shots_count: (insights.shots || []).length,
+          faces_count: (insights.faces || []).length,
+          labels: (insights.labels || []).map(l => l.name),
+          keywords: (insights.keywords || []).map(k => k.name),
+          topics: (insights.topics || []).map(t => t.name),
+          ocr_texts: (insights.ocr || []).map(o => o.text),
+          transcript: (insights.transcript || []).map(t => t.text).join(' '),
+          source: 'arc-video-indexer',
+        });
+      }
+    } catch(e) { console.error('VI insights load error:', e); }
+  }
+
+  function renderViInsightsData(vi) {
+    const card = $('#vi-insights-card');
+    const bar = $('#vi-progress-bar');
+    const grid = $('#vi-insights-grid');
+    card.style.display = 'block';
+    bar.style.display = 'none';
+    grid.style.display = 'block';
+
+    $('#vi-scenes').textContent = vi.scenes_count ?? '—';
+    $('#vi-shots').textContent = vi.shots_count ?? '—';
+    $('#vi-faces').textContent = vi.faces_count ?? '—';
+    $('#vi-labels').textContent = (vi.labels || []).join(', ') || '—';
+    $('#vi-keywords').textContent = (vi.keywords || []).join(', ') || '—';
+    $('#vi-topics').textContent = (vi.topics || []).join(', ') || '—';
+    $('#vi-ocr').textContent = (vi.ocr_texts || []).join(', ') || '—';
+    $('#vi-transcript').textContent = vi.transcript || '—';
+  }
+
+  function hideViInsights() {
+    $('#vi-insights-card').style.display = 'none';
   }
 
   // ── File upload ────────────────────────────────────────────────────

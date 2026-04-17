@@ -469,3 +469,28 @@ a:hover { text-decoration: underline; }
   #pipeline-steps { flex-wrap: wrap; }
   .pipeline-connector { display: none; }
 }
+
+/* ── Video Indexer Insights ─────────────────────────────────────── */
+.vi-insight-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.vi-insight-row:last-child { border-bottom: none; }
+.vi-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  margin-right: 12px;
+  min-width: 100px;
+}
+.vi-value {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-main);
+  text-align: right;
+  word-break: break-word;
+  max-width: 60%;
+}
