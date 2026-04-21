@@ -412,6 +412,14 @@ a:hover { text-decoration: underline; }
   min-width: 16px; text-align: center;
 }
 .video-tab.active .tab-det-count { background: var(--accent-dim); color: var(--accent); }
+.video-tab .tab-delete {
+  background: none; border: none; color: var(--text-muted);
+  font-size: 14px; line-height: 1; cursor: pointer;
+  padding: 0 2px; margin-left: 2px; border-radius: 4px;
+  opacity: 0; transition: opacity 0.2s, color 0.2s, background 0.2s;
+}
+.video-tab:hover .tab-delete { opacity: 1; }
+.video-tab .tab-delete:hover { color: var(--red); background: rgba(255,70,70,0.15); }
 .video-tab.complete .tab-status::after { content: "✅"; }
 .video-tab.processing .tab-status::after { content: "⏳"; }
 .video-tab.processing .tab-status { animation: pulse 1s ease-in-out infinite; }

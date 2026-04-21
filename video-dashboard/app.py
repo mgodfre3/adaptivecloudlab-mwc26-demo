@@ -724,6 +724,36 @@ def list_videos():
     return jsonify(result)
 
 
+@app.route("/api/videos/<video_id>", methods=["DELETE"])
+def delete_video(video_id: str):
+    """Delete a video and all its data."""
+    with videos_lock:
+        vid = videos.pop(video_id, None)
+    if not vid:
+        return jsonify({"error": "Video not found"}), 404
+
+    # Delete the uploaded file
+    file_path = vid.get("file_path")
+    if file_path:
+        try:
+            Path(file_path).unlink(missing_ok=True)
+        except Exception as e:
+            app.logger.warning("Failed to delete file %s: %s", file_path, e)
+
+    # Remove from SQLite
+    try:
+        conn = _db()
+        conn.execute("DELETE FROM vi_videos WHERE local_id=?", (video_id,))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        app.logger.warning("Failed to delete DB record for %s: %s", video_id, e)
+
+    socketio.emit("video_deleted", {"id": video_id})
+    app.logger.info("Deleted video %s (%s)", video_id, vid.get("filename"))
+    return jsonify({"deleted": video_id}), 200
+
+
 @app.route("/api/videos/<video_id>/detections")
 def get_detections(video_id: str):
     """Get detection results JSON for a video."""

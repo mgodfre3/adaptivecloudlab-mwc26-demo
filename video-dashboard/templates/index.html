@@ -345,6 +345,21 @@
     }
   });
 
+  socket.on('video_deleted', (data) => {
+    delete videosMap[data.id];
+    renderVideoTabs();
+    if (currentVideoId === data.id) {
+      currentVideoId = null;
+      videoPlayer.src = '';
+      videoPlayer.style.display = 'none';
+      placeholder.style.display = '';
+      videoNameEl.textContent = 'No video selected';
+      summaryText.textContent = 'Select a video to view the AI-generated analysis summary.';
+      detectionsBody.innerHTML = '';
+      detectionsEmpty.style.display = '';
+    }
+  });
+
   // ── Clock ──────────────────────────────────────────────────────────
   function updateClock() {
     const now = new Date();
@@ -391,10 +406,33 @@
       tab.className = `video-tab ${v.status || ''} ${v.id === currentVideoId ? 'active' : ''}`;
       const name = v.filename || v.id;
       const dets = v.detection_count != null ? v.detection_count : '—';
-      tab.innerHTML = `<span class="tab-status"></span><span class="tab-name">${name}</span><span class="tab-det-count">${dets}</span>`;
+      tab.innerHTML = `<span class="tab-status"></span><span class="tab-name">${name}</span><span class="tab-det-count">${dets}</span><button class="tab-delete" title="Delete video">&times;</button>`;
+      tab.querySelector('.tab-delete').onclick = (e) => { e.stopPropagation(); deleteVideo(v.id, name); };
       tab.onclick = () => selectVideo(v.id);
       videoTabsEl.appendChild(tab);
     });
+  }
+
+  // ── Delete video ──────────────────────────────────────────────────
+  async function deleteVideo(id, name) {
+    if (!confirm(`Delete "${name}"?`)) return;
+    try {
+      const resp = await fetch(`/api/videos/${id}`, { method: 'DELETE' });
+      if (resp.ok) {
+        delete videosMap[id];
+        renderVideoTabs();
+        if (currentVideoId === id) {
+          currentVideoId = null;
+          videoPlayer.src = '';
+          videoPlayer.style.display = 'none';
+          placeholder.style.display = '';
+          videoNameEl.textContent = 'No video selected';
+          summaryText.textContent = 'Select a video to view the AI-generated analysis summary.';
+          detectionsBody.innerHTML = '';
+          detectionsEmpty.style.display = '';
+        }
+      }
+    } catch (err) { console.error('Delete failed:', err); }
   }
 
   // ── Select video ───────────────────────────────────────────────────
