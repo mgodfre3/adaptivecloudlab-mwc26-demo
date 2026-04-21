@@ -229,11 +229,15 @@
   </div>
 </main>
 
-<!-- ═══════════════════ Footer / Video Strip ═══════════════════ -->
+<!-- ═══════════════════ Video Library Strip ═══════════════════ -->
 <footer id="footer">
-  <span id="footer-label">Videos:</span>
-  <div id="video-tabs"></div>
-  <div id="upload-tab" onclick="document.getElementById('file-input').click()">+ Upload</div>
+  <div id="footer-label">
+    <span>Videos</span>
+    <div id="upload-tab" onclick="document.getElementById('file-input').click()">+ Upload</div>
+  </div>
+  <div id="video-tabs-scroll">
+    <div id="video-tabs"></div>
+  </div>
 </footer>
 
 <!-- ═══════════════════ Scripts ═══════════════════ -->
@@ -385,7 +389,9 @@
     Object.values(videosMap).forEach(v => {
       const tab = document.createElement('div');
       tab.className = `video-tab ${v.status || ''} ${v.id === currentVideoId ? 'active' : ''}`;
-      tab.innerHTML = `<span class="tab-status"></span>${v.filename || v.id}`;
+      const name = v.filename || v.id;
+      const dets = v.detection_count != null ? v.detection_count : '—';
+      tab.innerHTML = `<span class="tab-status"></span><span class="tab-name">${name}</span><span class="tab-det-count">${dets}</span>`;
       tab.onclick = () => selectVideo(v.id);
       videoTabsEl.appendChild(tab);
     });
