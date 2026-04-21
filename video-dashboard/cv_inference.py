@@ -22,15 +22,33 @@ logger = logging.getLogger(__name__)
 # Lazy-loaded ONNX session (cached after first use)
 _onnx_session = None
 _onnx_input_name: str | None = None
+_model_num_classes: int = 0
 
 INPUT_SIZE = 640
 
 # Default class labels matching the antenna detection model
-CLASS_LABELS = [
+ANTENNA_LABELS = [
     "cellular_antenna",
     "microwave_dish",
     "small_cell",
     "radio_unit",
+]
+
+# COCO 80-class labels (used when the model has 80 output classes)
+COCO_LABELS = [
+    "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train",
+    "truck", "boat", "traffic_light", "fire_hydrant", "stop_sign",
+    "parking_meter", "bench", "bird", "cat", "dog", "horse", "sheep", "cow",
+    "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella", "handbag",
+    "tie", "suitcase", "frisbee", "skis", "snowboard", "sports_ball", "kite",
+    "baseball_bat", "baseball_glove", "skateboard", "surfboard",
+    "tennis_racket", "bottle", "wine_glass", "cup", "fork", "knife", "spoon",
+    "bowl", "banana", "apple", "sandwich", "orange", "broccoli", "carrot",
+    "hot_dog", "pizza", "donut", "cake", "chair", "couch", "potted_plant",
+    "bed", "dining_table", "toilet", "tv", "laptop", "mouse", "remote",
+    "keyboard", "cell_phone", "microwave", "oven", "toaster", "sink",
+    "refrigerator", "book", "clock", "vase", "scissors", "teddy_bear",
+    "hair_drier", "toothbrush",
 ]
 
 # Frame skip: process every Nth frame to keep CPU runtime manageable
@@ -39,7 +57,7 @@ DEFAULT_FRAME_SKIP = 15
 
 def _get_onnx_session(model_path: str):
     """Load (or return cached) ONNX inference session."""
-    global _onnx_session, _onnx_input_name
+    global _onnx_session, _onnx_input_name, _model_num_classes
 
     if _onnx_session is not None:
         return _onnx_session, _onnx_input_name
@@ -70,8 +88,29 @@ def _get_onnx_session(model_path: str):
     _onnx_session = ort.InferenceSession(model_path, providers=providers)
     _onnx_input_name = _onnx_session.get_inputs()[0].name
     active = _onnx_session.get_providers()
-    logger.info("CV Inference: ONNX Runtime providers: %s", active)
+
+    # Detect number of classes from output shape: (1, 4+C, N)
+    out_shape = _onnx_session.get_outputs()[0].shape
+    if out_shape and len(out_shape) == 3 and isinstance(out_shape[1], int):
+        _model_num_classes = out_shape[1] - 4
+    else:
+        _model_num_classes = 0
+    logger.info("CV Inference: ONNX Runtime providers: %s, classes: %d", active, _model_num_classes)
     return _onnx_session, _onnx_input_name
+
+
+def get_model_labels(model_path: str) -> list[str]:
+    """Return the appropriate label list for the loaded model.
+
+    Auto-detects COCO (80 classes) vs antenna model (4 classes).
+    """
+    _get_onnx_session(model_path)  # ensure model is loaded
+    if _model_num_classes == 80:
+        return COCO_LABELS
+    if _model_num_classes == len(ANTENNA_LABELS):
+        return ANTENNA_LABELS
+    # Fallback: generate generic labels
+    return [f"class_{i}" for i in range(_model_num_classes)] if _model_num_classes > 0 else ANTENNA_LABELS
 
 
 def is_model_available(model_path: str) -> bool:
@@ -114,7 +153,7 @@ def run_inference(
         model_path: Path to the ONNX model.
         confidence_threshold: Minimum detection confidence.
         frame_skip: Process every Nth frame (1 = every frame).
-        labels: Class label strings (defaults to CLASS_LABELS).
+        labels: Class label strings (auto-detected from model if None).
         progress_callback: Called with (frames_processed, total_frames).
 
     Returns:
@@ -128,7 +167,7 @@ def run_inference(
     from postprocess import postprocess_yolo_output
 
     if labels is None:
-        labels = CLASS_LABELS
+        labels = get_model_labels(model_path)
 
     session, input_name = _get_onnx_session(model_path)
     if session is None:
