@@ -21,3 +21,7 @@ Thumbs.db
 
 *.onnx
 *.pt
+
+# Training artifacts
+cv-inference/datasets/
+cv-inference/runs/

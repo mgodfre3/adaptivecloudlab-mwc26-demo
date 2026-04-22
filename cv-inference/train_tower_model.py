@@ -43,6 +43,7 @@ After training:
 import argparse
 import os
 import shutil
+import subprocess
 import sys
 import zipfile
 from pathlib import Path
@@ -50,6 +51,49 @@ from pathlib import Path
 
 GDRIVE_FILE_ID = "1jFjSSOv4nJ_-z-rTVW3mcS-uE5K7S9_p"
 DATASET_URL = f"https://drive.google.com/uc?id={GDRIVE_FILE_ID}"
+
+
+def _extract_rar(rar_path: str, dest_dir: str):
+    """Extract a RAR archive using either rarfile (Python) or system unrar."""
+    # Try Python rarfile library first
+    try:
+        import rarfile
+
+        with rarfile.RarFile(rar_path) as rf:
+            rf.extractall(dest_dir)
+        return
+    except ImportError:
+        pass
+
+    # Try system unrar / 7z
+    for cmd in [
+        ["unrar", "x", "-o+", rar_path, dest_dir + os.sep],
+        ["7z", "x", rar_path, f"-o{dest_dir}", "-y"],
+        [r"C:\Program Files\7-Zip\7z.exe", "x", rar_path, f"-o{dest_dir}", "-y"],
+    ]:
+        try:
+            subprocess.run(cmd, check=True, capture_output=True)
+            return
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            continue
+
+    # Last resort: install rarfile + unrar_free
+    print("Installing rarfile library...")
+    os.system(f"{sys.executable} -m pip install rarfile --quiet")
+    import rarfile
+
+    # On Windows, try to use unrar.exe from PATH or tell user
+    try:
+        with rarfile.RarFile(rar_path) as rf:
+            rf.extractall(dest_dir)
+    except rarfile.RarCannotExec:
+        print(
+            "\nERROR: Cannot extract RAR file. Please install one of:\n"
+            "  - 7-Zip:  winget install 7zip.7zip\n"
+            "  - UnRAR:  winget install RARLab.UnRAR\n"
+            "Then re-run the script.\n"
+        )
+        sys.exit(1)
 
 
 def download_antenna_dataset(dest_dir: str) -> str:
@@ -65,20 +109,19 @@ def download_antenna_dataset(dest_dir: str) -> str:
         import gdown
 
     os.makedirs(dest_dir, exist_ok=True)
-    zip_path = os.path.join(dest_dir, "antenna_dataset.zip")
+    archive_path = os.path.join(dest_dir, "antenna_dataset.rar")
 
-    if not os.path.isfile(zip_path):
-        print(f"Downloading Antenna-Dataset (~2.6 GB) to {zip_path}...")
-        gdown.download(DATASET_URL, zip_path, quiet=False)
+    if not os.path.isfile(archive_path):
+        print(f"Downloading Antenna-Dataset (~2.6 GB) to {archive_path}...")
+        gdown.download(DATASET_URL, archive_path, quiet=False)
     else:
-        print(f"Using cached download: {zip_path}")
+        print(f"Using cached download: {archive_path}")
 
-    # Extract
+    # Extract — file is RAR format
     extract_dir = os.path.join(dest_dir, "antenna_dataset")
     if not os.path.isdir(extract_dir):
-        print("Extracting dataset...")
-        with zipfile.ZipFile(zip_path, "r") as zf:
-            zf.extractall(dest_dir)
+        print("Extracting dataset (RAR archive)...")
+        _extract_rar(archive_path, dest_dir)
         print(f"Extracted to {dest_dir}")
 
     # The dataset structure after extraction:
