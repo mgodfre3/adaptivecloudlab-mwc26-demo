@@ -17,10 +17,9 @@ and ONNX export end-to-end.
 cd cv-inference
 
 # Install dependencies
-pip install ultralytics roboflow
+pip install ultralytics gdown pyyaml
 
-# Full pipeline (downloads RF100 cell tower dataset, trains, exports)
-export ROBOFLOW_API_KEY=<your-key>
+# Full pipeline (downloads Antenna-Dataset from Google Drive, trains, exports)
 python train_tower_model.py
 
 # With a local dataset you already have
@@ -36,8 +35,16 @@ The output is `yolov8s-antenna.onnx` — ready for deployment.
 
 ## Model Classes
 
-The model detects 5 classes (aligned with
-[authenciat/cell-tower-classification](https://github.com/authenciat/cell-tower-classification)):
+### Default: 1-class Antenna Model (jafaryi/Antenna-Dataset)
+
+| ID | Class    | Description                              |
+|----|----------|------------------------------------------|
+| 0  | Antenna  | Cell tower antenna head / panel          |
+
+9,156 images at 640x640, YOLO-format labels, train/valid splits included.
+Source: [github.com/jafaryi/Antenna-Dataset](https://github.com/jafaryi/Antenna-Dataset)
+
+### Alternative: 5-class Model (authenciat/cell-tower-classification)
 
 | ID | Class              | Description                          |
 |----|--------------------|--------------------------------------|
@@ -54,13 +61,18 @@ ONNX model output shape and selects the appropriate labels.
 
 ## Dataset Options
 
-### Option A: Roboflow RF100 Cell Towers (Recommended)
+### Option A: Antenna-Dataset from GitHub (Recommended — No Account Needed)
 
-1. Get a free API key at https://app.roboflow.com/settings/api
-2. The training script downloads automatically:
-   - [RF100 Cellular Towers](https://universe.roboflow.com/roboflow-j99jq/rf-100-cellular-towers-vkzrq)
-   - YOLOv8 format with train/val/test splits + `data.yaml`
-3. ~300 labeled images, 5+ tower/antenna classes
+The default dataset. 9,156 images, 1 class, auto-downloaded by the training script.
+
+- Source: [github.com/jafaryi/Antenna-Dataset](https://github.com/jafaryi/Antenna-Dataset)
+- Download: ~2.6 GB from Google Drive (automated via `gdown`)
+- Format: YOLO (images + labels, train/valid splits)
+- No API key or account required
+
+```bash
+python train_tower_model.py  # downloads automatically
+```
 
 ### Option B: Custom Frames from Drone Footage
 

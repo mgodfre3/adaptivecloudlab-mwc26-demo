@@ -30,7 +30,11 @@ INPUT_SIZE = 640
 # These are updated when a trained model is deployed; cv_inference
 # auto-detects class count from the ONNX output shape, so these labels
 # just need to match the order used during training.
-ANTENNA_LABELS = [
+#
+# 1-class model (jafaryi/Antenna-Dataset):
+ANTENNA_LABELS_1 = ["Antenna"]
+# 5-class model (authenciat/cell-tower-classification):
+ANTENNA_LABELS_5 = [
     "GSM Antenna",
     "Microwave Antenna",
     "antenna",
@@ -119,15 +123,17 @@ def _get_onnx_session(model_path: str):
 def get_model_labels(model_path: str) -> list[str]:
     """Return the appropriate label list for the loaded model.
 
-    Auto-detects COCO (80 classes) vs antenna model (5 classes).
+    Auto-detects COCO (80 classes) vs antenna models (1 or 5 classes).
     """
     _get_onnx_session(model_path)  # ensure model is loaded
     if _model_num_classes == 80:
         return COCO_LABELS
-    if _model_num_classes == len(ANTENNA_LABELS):
-        return ANTENNA_LABELS
+    if _model_num_classes == len(ANTENNA_LABELS_1):
+        return ANTENNA_LABELS_1
+    if _model_num_classes == len(ANTENNA_LABELS_5):
+        return ANTENNA_LABELS_5
     # Fallback: generate generic labels
-    return [f"class_{i}" for i in range(_model_num_classes)] if _model_num_classes > 0 else ANTENNA_LABELS
+    return [f"class_{i}" for i in range(_model_num_classes)] if _model_num_classes > 0 else ANTENNA_LABELS_1
 
 
 def is_model_available(model_path: str) -> bool:

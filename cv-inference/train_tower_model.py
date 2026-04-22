@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
 """Fine-tune YOLOv8 on cell tower / antenna detection data.
 
-This script downloads a cell tower dataset from Roboflow, fine-tunes
-YOLOv8s, and exports the resulting model to ONNX for edge deployment
-in the video-dashboard pipeline.
+This script downloads a cell tower antenna dataset, fine-tunes YOLOv8s,
+and exports the resulting model to ONNX for edge deployment in the
+video-dashboard pipeline.
+
+Dataset source: https://github.com/jafaryi/Antenna-Dataset
+  - 9,156 images (640x640) with YOLO-format bounding box labels
+  - 1 class: "Antenna Head"
+  - Train/valid splits included
 
 Usage:
     # Full pipeline: download data, train, export
     python train_tower_model.py
 
     # Train with a local dataset you've already downloaded
-    python train_tower_model.py --data-dir ./datasets/cell-towers
+    python train_tower_model.py --data-dir ./datasets/antenna_dataset
 
     # Resume from a previous training run
     python train_tower_model.py --resume runs/detect/train/weights/last.pt
@@ -22,7 +27,7 @@ Environment:
     Requires a GPU for reasonable training time (~20-40 min on a single
     NVIDIA GPU).  CPU training works but takes several hours.
 
-    pip install ultralytics roboflow
+    pip install ultralytics gdown
 
 After training:
     1. Copy the ONNX model to the cluster PVC:
@@ -39,42 +44,119 @@ import argparse
 import os
 import shutil
 import sys
+import zipfile
 from pathlib import Path
 
 
-def download_roboflow_dataset(dest_dir: str, api_key: str | None = None) -> str:
-    """Download a cell tower object detection dataset from Roboflow.
+GDRIVE_FILE_ID = "1jFjSSOv4nJ_-z-rTVW3mcS-uE5K7S9_p"
+DATASET_URL = f"https://drive.google.com/uc?id={GDRIVE_FILE_ID}"
 
-    Returns the path to the dataset directory containing data.yaml.
+
+def download_antenna_dataset(dest_dir: str) -> str:
+    """Download the Antenna-Dataset from Google Drive (jafaryi/Antenna-Dataset).
+
+    The dataset is ~2.6 GB.  Returns the path to the generated data.yaml.
     """
     try:
-        from roboflow import Roboflow
+        import gdown
     except ImportError:
-        print("Installing roboflow...")
-        os.system(f"{sys.executable} -m pip install roboflow --quiet")
-        from roboflow import Roboflow
+        print("Installing gdown...")
+        os.system(f"{sys.executable} -m pip install gdown --quiet")
+        import gdown
 
-    key = api_key or os.environ.get("ROBOFLOW_API_KEY")
-    if not key:
-        print(
-            "\n⚠️  No Roboflow API key found.\n"
-            "   Get a free key at https://app.roboflow.com/settings/api\n"
-            "   Then set ROBOFLOW_API_KEY env var or pass --roboflow-key.\n"
-            "\n   Alternatively, manually download a YOLOv8 dataset and point\n"
-            "   --data-dir at the folder containing data.yaml.\n"
-        )
+    os.makedirs(dest_dir, exist_ok=True)
+    zip_path = os.path.join(dest_dir, "antenna_dataset.zip")
+
+    if not os.path.isfile(zip_path):
+        print(f"Downloading Antenna-Dataset (~2.6 GB) to {zip_path}...")
+        gdown.download(DATASET_URL, zip_path, quiet=False)
+    else:
+        print(f"Using cached download: {zip_path}")
+
+    # Extract
+    extract_dir = os.path.join(dest_dir, "antenna_dataset")
+    if not os.path.isdir(extract_dir):
+        print("Extracting dataset...")
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            zf.extractall(dest_dir)
+        print(f"Extracted to {dest_dir}")
+
+    # The dataset structure after extraction:
+    #   antenna_dataset/train/images/  + labels/
+    #   antenna_dataset/valid/images/  + labels/
+    # We need to find the actual directories
+    data_yaml = _create_data_yaml(dest_dir)
+    return data_yaml
+
+
+def _create_data_yaml(dataset_root: str) -> str:
+    """Generate a data.yaml for the antenna dataset.
+
+    Searches for train/images and valid/images directories and writes
+    the YAML config that Ultralytics expects.
+    """
+    import yaml
+
+    train_images = None
+    val_images = None
+
+    for root, dirs, files in os.walk(dataset_root):
+        rel = os.path.relpath(root, dataset_root).replace("\\", "/")
+        # Look for train/images or train/image directories
+        if ("train" in rel.lower()) and any(
+            d.lower() in ("images", "image") for d in dirs
+        ):
+            img_dir = next(d for d in dirs if d.lower() in ("images", "image"))
+            candidate = os.path.join(root, img_dir)
+            # Prefer the larger set (general dataset over sunlight subset)
+            if train_images is None or len(os.listdir(candidate)) > len(
+                os.listdir(train_images)
+            ):
+                train_images = candidate
+
+        if ("valid" in rel.lower() or "val" in rel.lower()) and any(
+            d.lower() in ("images", "image") for d in dirs
+        ):
+            img_dir = next(d for d in dirs if d.lower() in ("images", "image"))
+            candidate = os.path.join(root, img_dir)
+            if val_images is None or len(os.listdir(candidate)) > len(
+                os.listdir(val_images)
+            ):
+                val_images = candidate
+
+    if not train_images:
+        print(f"ERROR: Could not find train/images in {dataset_root}")
+        print("Directory contents:")
+        for root, dirs, files in os.walk(dataset_root):
+            level = root.replace(dataset_root, "").count(os.sep)
+            if level < 4:
+                indent = " " * 2 * level
+                print(f"{indent}{os.path.basename(root)}/")
         sys.exit(1)
 
-    rf = Roboflow(api_key=key)
+    # If no validation set found, we'll let ultralytics auto-split
+    data = {
+        "path": os.path.abspath(dataset_root),
+        "train": os.path.relpath(train_images, dataset_root).replace("\\", "/"),
+        "nc": 1,
+        "names": ["Antenna"],
+    }
+    if val_images:
+        data["val"] = os.path.relpath(val_images, dataset_root).replace("\\", "/")
+    else:
+        # Use train as val too — ultralytics will handle val split if needed
+        data["val"] = data["train"]
+        print("WARNING: No validation set found, using train set for validation")
 
-    # Primary: RF100 Cellular Towers (object detection, YOLOv8 format)
-    # https://universe.roboflow.com/roboflow-j99jq/rf-100-cellular-towers-vkzrq
-    print("Downloading RF100 Cellular Towers dataset from Roboflow...")
-    project = rf.workspace("roboflow-j99jq").project("rf-100-cellular-towers-vkzrq")
-    version = project.version(1)
-    dataset = version.download("yolov8", location=dest_dir)
-    print(f"Dataset downloaded to {dataset.location}")
-    return dataset.location
+    yaml_path = os.path.join(dataset_root, "data.yaml")
+    with open(yaml_path, "w") as f:
+        yaml.dump(data, f, default_flow_style=False)
+
+    n_train = len(os.listdir(train_images))
+    n_val = len(os.listdir(val_images)) if val_images else 0
+    print(f"Dataset: {n_train} train images, {n_val} val images")
+    print(f"data.yaml: {yaml_path}")
+    return yaml_path
 
 
 def find_data_yaml(data_dir: str) -> str:
@@ -185,11 +267,6 @@ def main():
         help="Path to an existing dataset with data.yaml (skip download)",
     )
     parser.add_argument(
-        "--roboflow-key",
-        default=None,
-        help="Roboflow API key (or set ROBOFLOW_API_KEY env var)",
-    )
-    parser.add_argument(
         "--base-model",
         default="yolov8s.pt",
         help="Base YOLO model to fine-tune (default: yolov8s.pt)",
@@ -228,9 +305,8 @@ def main():
     if args.data_dir:
         data_yaml = find_data_yaml(args.data_dir)
     else:
-        dest = os.path.join("datasets", "cell-towers")
-        data_loc = download_roboflow_dataset(dest, api_key=args.roboflow_key)
-        data_yaml = find_data_yaml(data_loc)
+        dest = os.path.join("datasets", "antenna-dataset")
+        data_yaml = download_antenna_dataset(dest)
 
     print(f"Using dataset config: {data_yaml}")
 
