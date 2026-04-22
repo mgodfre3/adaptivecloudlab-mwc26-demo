@@ -27,11 +27,15 @@ _model_num_classes: int = 0
 INPUT_SIZE = 640
 
 # Default class labels matching the antenna detection model
+# These are updated when a trained model is deployed; cv_inference
+# auto-detects class count from the ONNX output shape, so these labels
+# just need to match the order used during training.
 ANTENNA_LABELS = [
-    "cellular_antenna",
-    "microwave_dish",
-    "small_cell",
-    "radio_unit",
+    "GSM Antenna",
+    "Microwave Antenna",
+    "antenna",
+    "Lattice Tower",
+    "M Type Tower",
 ]
 
 # COCO 80-class labels (used when the model has 80 output classes)
@@ -50,6 +54,19 @@ COCO_LABELS = [
     "refrigerator", "book", "clock", "vase", "scissors", "teddy_bear",
     "hair_drier", "toothbrush",
 ]
+
+# COCO classes plausible in aerial drone footage of cell towers.
+# Everything else (bicycle, train, pizza, etc.) is suppressed.
+COCO_AERIAL_ALLOWLIST = {
+    "person", "car", "truck", "bus", "airplane",
+    "bird", "kite",
+    "backpack", "umbrella",
+    "cell_phone",
+    "clock",
+    "stop_sign", "fire_hydrant", "traffic_light",
+    "chair", "bench",
+    "potted_plant",
+}
 
 # Frame skip: process every Nth frame to keep CPU runtime manageable
 DEFAULT_FRAME_SKIP = 15
@@ -102,7 +119,7 @@ def _get_onnx_session(model_path: str):
 def get_model_labels(model_path: str) -> list[str]:
     """Return the appropriate label list for the loaded model.
 
-    Auto-detects COCO (80 classes) vs antenna model (4 classes).
+    Auto-detects COCO (80 classes) vs antenna model (5 classes).
     """
     _get_onnx_session(model_path)  # ensure model is loaded
     if _model_num_classes == 80:
@@ -218,6 +235,10 @@ def run_inference(
             orig_height=height,
             labels=labels,
         )
+
+        # Filter out nonsensical COCO detections for aerial footage
+        if _model_num_classes == 80:
+            detections = [d for d in detections if d["label"] in COCO_AERIAL_ALLOWLIST]
 
         if detections:
             frames_with_detections += 1
