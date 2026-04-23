@@ -460,6 +460,7 @@ def _process_video(video_id: str):
 
     vi_success = False
     vi_insights = None
+    vi_video_id = None
 
     if vi_client.configured and file_path:
         try:
@@ -556,6 +557,19 @@ def _process_video(video_id: str):
     # Store VI insights in memory
     with videos_lock:
         videos[video_id]["vi_insights"] = vi_insights
+
+    # ── Step 2b: BYOM — Push YOLO detections as VI custom insights ───
+    if vi_success and vi_video_id and detections and vi_client.configured:
+        try:
+            app.logger.info("[%s] BYOM: Patching %d detections into VI video %s",
+                           video_id, len(detections), vi_video_id)
+            vi_client.patch_custom_insights(
+                video_id=vi_video_id,
+                detections=detections,
+                model_name="Antenna Detection (YOLOv8s — Edge)",
+            )
+        except Exception as byom_exc:
+            app.logger.warning("[%s] BYOM patch failed (non-fatal): %s", video_id, byom_exc)
 
     # ── Step 3: AI Summary ───────────────────────────────────────────
     _update_pipeline(video_id, "ai_summary", "running")

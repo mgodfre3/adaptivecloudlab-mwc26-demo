@@ -217,6 +217,133 @@ class VideoIndexerClient:
             resp = client.delete(url, headers=self._headers())
             return resp.status_code == 204
 
+    # ── BYOM: Custom Insights ───────────────────────────────────────────
+
+    def patch_custom_insights(
+        self,
+        video_id: str,
+        detections: list[dict],
+        model_name: str = "Antenna Detection (YOLOv8)",
+        replace: bool = False,
+    ) -> bool:
+        """Patch custom insights into an indexed video (BYOM integration).
+
+        Takes detections from our YOLO model and injects them as custom
+        insights visible in the VI portal and API.
+
+        Args:
+            video_id: VI video ID.
+            detections: List of detection dicts from cv_inference (must have
+                        label, confidence, timestamp fields).
+            model_name: Display name for the custom insight group.
+            replace: If True, replace existing custom insights; otherwise add.
+
+        Returns:
+            True if patch succeeded.
+
+        The patch format follows the Azure Video Indexer custom insights
+        schema: /insights/customInsights with JSON Patch operations.
+        """
+        if not detections:
+            logger.info("BYOM: No detections to patch for video %s", video_id)
+            return True
+
+        # Group detections by label → time-based instances
+        from collections import defaultdict
+        label_instances: dict[str, list[dict]] = defaultdict(list)
+
+        for det in detections:
+            label = det.get("label", "Unknown")
+            ts = det.get("timestamp", 0)
+            conf = det.get("confidence", 0.0)
+            # Each instance is a time window around the detection
+            start_sec = max(0, ts - 0.5)
+            end_sec = ts + 0.5
+            label_instances[label].append({
+                "Start": _format_vi_time(start_sec),
+                "End": _format_vi_time(end_sec),
+                "AdjustedStart": _format_vi_time(start_sec),
+                "AdjustedEnd": _format_vi_time(end_sec),
+                "Confidence": round(conf, 4),
+            })
+
+        # Build custom insight results
+        results = []
+        for idx, (label, instances) in enumerate(label_instances.items()):
+            # Merge overlapping instances
+            merged = _merge_time_instances(instances)
+            results.append({
+                "Type": label,
+                "SubType": f"{label}_id",
+                "Id": idx + 1,
+                "Instances": merged,
+            })
+
+        custom_insights = {
+            "Name": model_name,
+            "DisplayName": model_name,
+            "DisplayType": "CapsuleAndTags",
+            "Results": results,
+        }
+
+        patch_body = [{
+            "op": "replace" if replace else "add",
+            "value": [custom_insights],
+            "path": "/insights/customInsights",
+        }]
+
+        url = self._api_url(f"Videos/{video_id}/Index")
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                resp = client.patch(
+                    url,
+                    json=patch_body,
+                    headers={
+                        **self._headers(),
+                        "Content-Type": "application/json",
+                    },
+                )
+                resp.raise_for_status()
+                logger.info(
+                    "BYOM: Patched %d detection types (%d total) into video %s",
+                    len(results),
+                    sum(len(r["Instances"]) for r in results),
+                    video_id,
+                )
+                return True
+        except Exception as exc:
+            logger.error("BYOM: Failed to patch insights for video %s: %s", video_id, exc)
+            return False
+
+    def get_video_thumbnails(self, video_id: str) -> list[dict]:
+        """Get thumbnail/keyframe URLs for an indexed video."""
+        url = self._api_url(f"Videos/{video_id}/Index")
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                resp = client.get(url, headers=self._headers())
+                resp.raise_for_status()
+                index_data = resp.json()
+
+            thumbnails = []
+            for video in index_data.get("videos", [index_data]):
+                for shot in video.get("insights", {}).get("shots", []):
+                    for keyframe in shot.get("keyFrames", []):
+                        for instance in keyframe.get("instances", []):
+                            thumb_id = instance.get("thumbnailId", "")
+                            if thumb_id:
+                                thumbnails.append({
+                                    "id": thumb_id,
+                                    "start": instance.get("start", ""),
+                                    "end": instance.get("end", ""),
+                                    "url": self._api_url(
+                                        f"Videos/{video_id}/Thumbnails/{thumb_id}"
+                                    ),
+                                })
+            return thumbnails
+        except Exception as exc:
+            logger.warning("Failed to get thumbnails for %s: %s", video_id, exc)
+            return []
+
     def health_check(self) -> bool:
         """Verify we can reach VI and authenticate."""
         try:
@@ -225,3 +352,48 @@ class VideoIndexerClient:
         except Exception as exc:
             logger.warning("VI health check failed: %s", exc)
             return False
+
+
+# ── Helper functions ─────────────────────────────────────────────────────
+
+def _format_vi_time(seconds: float) -> str:
+    """Format seconds as HH:MM:SS.FFFFFFF for VI API."""
+    hrs = int(seconds // 3600)
+    mins = int((seconds % 3600) // 60)
+    secs = seconds % 60
+    return f"{hrs:02d}:{mins:02d}:{secs:010.7f}"
+
+
+def _merge_time_instances(instances: list[dict], gap_tolerance: float = 1.0) -> list[dict]:
+    """Merge overlapping or near-adjacent time instances.
+
+    Groups detections that are within gap_tolerance seconds of each other
+    into single time ranges, averaging confidence scores.
+    """
+    if not instances:
+        return instances
+
+    def _parse_time(t: str) -> float:
+        parts = t.split(":")
+        return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+
+    sorted_inst = sorted(instances, key=lambda x: _parse_time(x["Start"]))
+    merged = [sorted_inst[0].copy()]
+
+    for inst in sorted_inst[1:]:
+        prev = merged[-1]
+        prev_end = _parse_time(prev["End"])
+        curr_start = _parse_time(inst["Start"])
+
+        if curr_start <= prev_end + gap_tolerance:
+            # Merge: extend end time, average confidence
+            new_end = max(prev_end, _parse_time(inst["End"]))
+            prev["End"] = _format_vi_time(new_end)
+            prev["AdjustedEnd"] = prev["End"]
+            prev["Confidence"] = round(
+                (prev["Confidence"] + inst["Confidence"]) / 2, 4
+            )
+        else:
+            merged.append(inst.copy())
+
+    return merged

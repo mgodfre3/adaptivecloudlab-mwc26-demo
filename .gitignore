@@ -25,3 +25,5 @@ Thumbs.db
 # Training artifacts
 cv-inference/datasets/
 cv-inference/runs/
+cv-inference/_azureml_conda.yml
+cv-inference/_azureml_output/
