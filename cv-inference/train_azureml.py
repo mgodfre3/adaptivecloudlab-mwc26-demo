@@ -45,9 +45,9 @@ import time
 def get_ml_client(subscription_id: str, resource_group: str, workspace: str):
     """Create an Azure ML client."""
     from azure.ai.ml import MLClient
-    from azure.identity import DefaultAzureCredential
+    from azure.identity import AzureCliCredential
 
-    credential = DefaultAzureCredential()
+    credential = AzureCliCredential()
     return MLClient(credential, subscription_id, resource_group, workspace)
 
 
@@ -129,11 +129,12 @@ dependencies:
 
 def submit_training_job(
     ml_client,
-    compute_name: str,
+    compute_name: str | None,
     env_name: str,
     epochs: int = 30,
     batch: int = 16,
     experiment_name: str = "antenna-detection",
+    vm_size: str = "Standard_NC4as_T4_v3",
 ):
     """Submit a training job to Azure ML."""
     from azure.ai.ml import Input, command
@@ -149,11 +150,11 @@ def submit_training_job(
         "--output ${{outputs.model_output}}/yolov8s-antenna.onnx"
     )
 
-    job = command(
+    # Build job kwargs — use serverless if no compute cluster available
+    job_kwargs = dict(
         code=os.path.dirname(__file__) or ".",
         command=training_command,
         environment=f"{env_name}@latest",
-        compute=compute_name,
         outputs={
             "model_output": {"type": AssetTypes.URI_FOLDER, "mode": "rw_mount"},
         },
@@ -171,6 +172,19 @@ def submit_training_job(
             "target": "edge-deployment",
         },
     )
+
+    # Use named compute cluster if available, otherwise serverless
+    if compute_name:
+        job_kwargs["compute"] = compute_name
+    else:
+        from azure.ai.ml.entities import JobResourceConfiguration
+        job_kwargs["resources"] = JobResourceConfiguration(
+            instance_type=vm_size,
+            instance_count=1,
+        )
+        print(f"   Using serverless compute ({vm_size})")
+
+    job = command(**job_kwargs)
 
     returned_job = ml_client.jobs.create_or_update(job)
     print(f"✅ Job submitted: {returned_job.name}")
@@ -234,20 +248,24 @@ def main():
         help="Azure subscription ID",
     )
     parser.add_argument(
-        "--resource-group", default="kkambow-rg",
+        "--resource-group", default="AdaptiveCloudLab",
         help="Azure ML resource group",
     )
     parser.add_argument(
-        "--workspace", default="Demo-AML",
+        "--workspace", default="acx-ml-training",
         help="Azure ML workspace name",
     )
     parser.add_argument(
-        "--compute-name", default="gpu-nc6sv3",
-        help="Compute cluster name",
+        "--compute-name", default=None,
+        help="Compute cluster name (omit for serverless compute)",
     )
     parser.add_argument(
-        "--compute-size", default="Standard_NC6s_v3",
-        help="VM size for compute cluster",
+        "--compute-size", default="Standard_NC4as_T4_v3",
+        help="VM size for compute cluster or serverless instance",
+    )
+    parser.add_argument(
+        "--serverless", action="store_true", default=True,
+        help="Use serverless compute (default; no pre-created cluster needed)",
     )
     parser.add_argument("--epochs", type=int, default=30, help="Training epochs")
     parser.add_argument("--batch", type=int, default=16, help="Batch size")
@@ -277,8 +295,10 @@ def main():
         download_model(ml_client, args.download_from, args.output)
         return
 
-    # Ensure compute
-    ensure_compute(ml_client, args.compute_name, args.compute_size)
+    # Ensure compute cluster (skip if serverless)
+    compute_name = args.compute_name
+    if compute_name:
+        ensure_compute(ml_client, compute_name, args.compute_size)
 
     # Ensure environment
     create_environment(ml_client)
@@ -286,10 +306,11 @@ def main():
     # Submit job
     job = submit_training_job(
         ml_client,
-        compute_name=args.compute_name,
+        compute_name=compute_name,
         env_name="yolov8-training",
         epochs=args.epochs,
         batch=args.batch,
+        vm_size=args.compute_size,
     )
 
     if args.no_wait:
