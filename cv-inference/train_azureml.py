@@ -142,8 +142,9 @@ def submit_training_job(
 
     print(f"🚀 Submitting training job (epochs={epochs}, batch={batch})...")
 
-    # The training command downloads the dataset, trains, and exports
+    # The training command: install unrar for RAR extraction, then train
     training_command = (
+        "apt-get update && apt-get install -y unrar p7zip-full && "
         "pip install gdown rarfile && "
         "python train_tower_model.py "
         f"--epochs {epochs} --batch {batch} "
