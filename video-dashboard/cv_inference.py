@@ -120,19 +120,55 @@ def _get_onnx_session(model_path: str):
     return _onnx_session, _onnx_input_name
 
 
+def _parse_onnx_names(metadata_str: str) -> list[str] | None:
+    """Safely parse the 'names' field from ONNX model metadata.
+
+    The field is typically a dict-like string: {0: 'Antenna', 1: 'Tower'}.
+    Returns an ordered list of class names, or None on failure.
+    """
+    if not metadata_str:
+        return None
+    try:
+        import ast
+        parsed = ast.literal_eval(metadata_str)
+        if isinstance(parsed, dict):
+            max_idx = max(parsed.keys())
+            return [str(parsed.get(i, f"class_{i}")) for i in range(max_idx + 1)]
+        if isinstance(parsed, (list, tuple)):
+            return [str(n) for n in parsed]
+    except Exception:
+        pass
+    return None
+
+
 def get_model_labels(model_path: str) -> list[str]:
     """Return the appropriate label list for the loaded model.
 
-    Auto-detects COCO (80 classes) vs antenna models (1 or 5 classes).
+    Reads class names from ONNX model metadata first, then falls back
+    to hardcoded lists matched by class count.
     """
-    _get_onnx_session(model_path)  # ensure model is loaded
+    session, _ = _get_onnx_session(model_path)  # ensure model is loaded
+
+    # Try reading labels from ONNX model metadata (most reliable)
+    if session is not None:
+        try:
+            meta = session.get_modelmeta()
+            names_str = meta.custom_metadata_map.get("names", "")
+            parsed = _parse_onnx_names(names_str)
+            if parsed and len(parsed) == _model_num_classes:
+                logger.info("CV Inference: using labels from ONNX metadata: %s", parsed)
+                return parsed
+        except Exception as exc:
+            logger.debug("Could not read ONNX metadata labels: %s", exc)
+
+    # Fallback: match by class count
     if _model_num_classes == 80:
         return COCO_LABELS
     if _model_num_classes == len(ANTENNA_LABELS_1):
         return ANTENNA_LABELS_1
     if _model_num_classes == len(ANTENNA_LABELS_5):
         return ANTENNA_LABELS_5
-    # Fallback: generate generic labels
+    # Last resort: generate generic labels
     return [f"class_{i}" for i in range(_model_num_classes)] if _model_num_classes > 0 else ANTENNA_LABELS_1
 
 
@@ -159,6 +195,58 @@ def format_timestamp(seconds: float) -> str:
     mins = int((seconds % 3600) // 60)
     secs = seconds % 60
     return f"{hrs:02d}:{mins:02d}:{secs:06.3f}"
+
+
+def _enrich_detections(detections: list[dict]) -> None:
+    """Add visual descriptor attributes to each detection in-place.
+
+    Adds:
+      - size_band: relative size descriptor (small / medium / large)
+      - vertical_band: position in frame (upper / mid / lower)
+      - confidence_band: detection clarity (high / moderate / low)
+      - display_label: human-friendly label combining class + descriptors
+    """
+    for det in detections:
+        bbox = det.get("bbox", {})
+        w = bbox.get("w", 0)
+        h = bbox.get("h", 0)
+        y = bbox.get("y", 0.5)
+        area = w * h
+        conf = det.get("confidence", 0)
+        label = det.get("label", "Object")
+
+        # Size band based on normalised bbox area
+        if area > 0.08:
+            size_band = "large"
+        elif area > 0.02:
+            size_band = "medium"
+        else:
+            size_band = "small"
+
+        # Vertical position in frame (0=top, 1=bottom)
+        cy = y + h / 2
+        if cy < 0.33:
+            vertical_band = "upper"
+        elif cy < 0.66:
+            vertical_band = "mid"
+        else:
+            vertical_band = "lower"
+
+        # Confidence band
+        if conf >= 0.8:
+            confidence_band = "high"
+        elif conf >= 0.6:
+            confidence_band = "moderate"
+        else:
+            confidence_band = "low"
+
+        det["size_band"] = size_band
+        det["vertical_band"] = vertical_band
+        det["confidence_band"] = confidence_band
+        det["display_label"] = (
+            f"{label} ({size_band} detection, {vertical_band} frame, "
+            f"{confidence_band} confidence)"
+        )
 
 
 def run_inference(
@@ -282,6 +370,9 @@ def run_inference(
     cap.release()
     elapsed = time.perf_counter() - start_time
 
+    # Enrich detections with visual descriptors
+    _enrich_detections(all_detections)
+
     avg_conf = (
         round(confidence_sum / total_detection_count, 4)
         if total_detection_count > 0
@@ -302,6 +393,9 @@ def run_inference(
         "source": "onnx-yolov8",
     }
 
+    # Add enrichment aggregates to summary for AI analysis
+    summary["enrichment"] = _aggregate_enrichment(all_detections)
+
     # Sort detections by frame order
     all_detections.sort(key=lambda d: d["frame"])
 
@@ -311,3 +405,39 @@ def run_inference(
     )
 
     return all_detections, summary
+
+
+def _aggregate_enrichment(detections: list[dict]) -> dict:
+    """Build aggregated enrichment stats for AI summary consumption."""
+    if not detections:
+        return {}
+
+    from collections import Counter
+    size_counts = Counter(d.get("size_band", "unknown") for d in detections)
+    vert_counts = Counter(d.get("vertical_band", "unknown") for d in detections)
+    conf_counts = Counter(d.get("confidence_band", "unknown") for d in detections)
+    label_counts = Counter(d.get("label", "unknown") for d in detections)
+
+    # Temporal clustering: find continuous detection segments
+    timestamps = sorted(set(d["timestamp"] for d in detections))
+    segments = []
+    if timestamps:
+        seg_start = timestamps[0]
+        seg_end = timestamps[0]
+        for t in timestamps[1:]:
+            if t - seg_end <= 2.0:  # within 2 seconds = same segment
+                seg_end = t
+            else:
+                segments.append((round(seg_start, 1), round(seg_end, 1)))
+                seg_start = t
+                seg_end = t
+        segments.append((round(seg_start, 1), round(seg_end, 1)))
+
+    return {
+        "by_class": dict(label_counts),
+        "by_size": dict(size_counts),
+        "by_position": dict(vert_counts),
+        "by_confidence": dict(conf_counts),
+        "detection_segments": segments,
+        "segment_count": len(segments),
+    }

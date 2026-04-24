@@ -345,7 +345,8 @@ def _check_video_indexer() -> bool:
         return False
 
 
-def _build_summary(filename: str, detections: list[dict], cv_source: str, duration: float) -> dict:
+def _build_summary(filename: str, detections: list[dict], cv_source: str, duration: float,
+                   enrichment: dict | None = None) -> dict:
     """Build a summary from real (or empty) detection results."""
     labels: dict[str, int] = {}
     for d in detections:
@@ -365,6 +366,25 @@ def _build_summary(filename: str, detections: list[dict], cv_source: str, durati
 
     label_summary = ", ".join(f"{count} {label}" for label, count in sorted(labels.items(), key=lambda x: -x[1]))
 
+    # Build enriched AI summary text
+    enrich_text = ""
+    if enrichment:
+        by_size = enrichment.get("by_size", {})
+        by_pos = enrichment.get("by_position", {})
+        by_conf = enrichment.get("by_confidence", {})
+        segs = enrichment.get("segment_count", 0)
+
+        size_parts = [f"{v} {k}" for k, v in sorted(by_size.items(), key=lambda x: -x[1])]
+        pos_parts = [f"{v} in {k} frame" for k, v in sorted(by_pos.items(), key=lambda x: -x[1])]
+        conf_parts = [f"{v} {k}-confidence" for k, v in sorted(by_conf.items(), key=lambda x: -x[1])]
+
+        enrich_text = (
+            f" Size distribution: {', '.join(size_parts)}."
+            f" Frame position: {', '.join(pos_parts)}."
+            f" Confidence breakdown: {', '.join(conf_parts)}."
+            f" Found across {segs} continuous detection segment(s)."
+        )
+
     return {
         "filename": filename,
         "total_detections": len(detections),
@@ -374,23 +394,60 @@ def _build_summary(filename: str, detections: list[dict], cv_source: str, durati
         "severity": severity,
         "cv_source": cv_source,
         "duration": duration,
+        "enrichment": enrichment or {},
         "ai_summary": (
-            f"Analysis of {filename}: {len(detections)} objects detected across "
+            f"Cell Tower Inspection — {filename}: {len(detections)} detections across "
             f"{round(duration)}s of drone footage. "
-            f"{('Detected: ' + label_summary + '. ') if label_summary else ''}"
-            f"{condition} Average detection confidence: {avg_conf*100:.0f}%."
+            f"{('Components: ' + label_summary + '. ') if label_summary else ''}"
+            f"{condition} Average confidence: {avg_conf*100:.0f}%.{enrich_text}"
         ),
     }
 
 
 SYSTEM_PROMPT = (
-    "You are a drone video analyst working at a cell-tower inspection site. "
-    "Given detection data from a drone flight, provide a concise, professional "
-    "summary of findings. If no objects were detected, state that clearly — "
-    "do not invent or assume detections that are not in the data. "
-    "Focus on what was actually observed: object types, counts, confidence levels, "
-    "and any patterns in the timestamps."
+    "You are a professional cell-tower inspection analyst reviewing drone flight data. "
+    "The detection model identifies cell tower components (antennas, panels, equipment) "
+    "using a YOLOv8 model trained on aerial cell tower imagery.\n\n"
+    "Given the structured detection data below, produce a concise inspection report with:\n"
+    "1. **Detection Overview**: What was found, total counts, and class breakdown\n"
+    "2. **Spatial Analysis**: Where detections cluster in the frame "
+    "(upper=top of structure, mid=mid-tower, lower=base/ground equipment)\n"
+    "3. **Confidence Assessment**: Detection reliability — "
+    "high-confidence detections are clear identifications, "
+    "moderate/low may indicate partially visible or distant components\n"
+    "4. **Temporal Pattern**: When detections occur during the flight, "
+    "continuous vs intermittent sightings\n\n"
+    "Be factual. Only describe what the data shows. Do not invent detections, "
+    "infer damage, or assume conditions not supported by the data. "
+    "Use professional inspection language."
 )
+
+
+def _format_detection_prompt(detections: list[dict], summary: dict) -> str:
+    """Format detection data + enrichment for LLM consumption."""
+    if not detections:
+        return "No objects were detected by the CV model in this video."
+
+    text = json.dumps(
+        [{"label": d["label"], "confidence": d["confidence"],
+          "timestamp": d["timestamp"],
+          "size_band": d.get("size_band", ""),
+          "vertical_band": d.get("vertical_band", ""),
+          "confidence_band": d.get("confidence_band", "")}
+         for d in detections[:50]],
+        indent=2,
+    )
+    enrich = summary.get("enrichment", {})
+    if enrich:
+        text += (
+            f"\n\nAggregated Analysis:\n"
+            f"- By class: {json.dumps(enrich.get('by_class', {}))}\n"
+            f"- By detection size: {json.dumps(enrich.get('by_size', {}))}\n"
+            f"- By frame position: {json.dumps(enrich.get('by_position', {}))}\n"
+            f"- By confidence level: {json.dumps(enrich.get('by_confidence', {}))}\n"
+            f"- Detection segments: {enrich.get('segment_count', 0)} continuous group(s)\n"
+        )
+    return text
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -575,7 +632,8 @@ def _process_video(video_id: str):
     _update_pipeline(video_id, "ai_summary", "running")
     socketio.emit("processing_update", {"id": video_id, "step": "ai_summary", "status": "running"})
 
-    summary = _build_summary(vid["filename"], detections, cv_source, duration)
+    summary = _build_summary(vid["filename"], detections, cv_source, duration,
+                             enrichment=cv_summary.get("enrichment"))
 
     # Enrich summary with real VI insights if available
     if vi_insights:
@@ -596,14 +654,7 @@ def _process_video(video_id: str):
             }
 
     # Try Foundry Local for AI summary
-    if detections:
-        detection_text = json.dumps(
-            [{"label": d["label"], "confidence": d["confidence"],
-              "timestamp": d["timestamp"]} for d in detections[:50]],
-            indent=2,
-        )
-    else:
-        detection_text = "No objects were detected by the CV model in this video."
+    detection_text = _format_detection_prompt(detections, summary)
 
     vi_context = ""
     if vi_insights:
@@ -618,7 +669,7 @@ def _process_video(video_id: str):
         )
 
     ai_response = _call_foundry_local(
-        f"Analyze these drone flight detections and provide a summary:\n{detection_text}{vi_context}",
+        f"Cell Tower Inspection Report — analyze these drone flight detections:\n{detection_text}{vi_context}",
         system=SYSTEM_PROMPT,
     )
     if ai_response:
@@ -843,8 +894,11 @@ def query_video(video_id: str):
         f"Detections ({len(detections)} total):\n"
         + json.dumps(
             [{"label": d["label"], "confidence": d["confidence"],
-              "timestamp": d["timestamp"]}
-             for d in detections[:50]],  # limit context size
+              "timestamp": d["timestamp"],
+              "size_band": d.get("size_band", ""),
+              "vertical_band": d.get("vertical_band", ""),
+              "display_label": d.get("display_label", d.get("label", ""))}
+             for d in detections[:50]],
             indent=2,
         )
     )
@@ -1161,6 +1215,7 @@ def _complete_analysis(video_id: str, vi_insights: dict | None):
     detections = vid.get("detections", [])
     cv_source = vid.get("cv_source", "unknown")
     duration = vid.get("duration") or 0
+    cv_summary = {}
 
     if not detections and vid.get("file_path") and cv_inference.is_model_available(CV_MODEL_PATH):
         try:
@@ -1196,7 +1251,8 @@ def _complete_analysis(video_id: str, vi_insights: dict | None):
     socketio.emit("processing_update", {"id": video_id, "step": "ai_summary", "status": "running"})
 
     # Build summary
-    summary = _build_summary(vid["filename"], detections, cv_source, duration)
+    summary = _build_summary(vid["filename"], detections, cv_source, duration,
+                             enrichment=cv_summary.get("enrichment"))
 
     # Enrich with real VI insights
     if vi_insights:
@@ -1217,14 +1273,7 @@ def _complete_analysis(video_id: str, vi_insights: dict | None):
             }
 
     # Try Foundry Local for AI summary
-    if detections:
-        detection_text = json.dumps(
-            [{"label": d["label"], "confidence": d["confidence"],
-              "timestamp": d["timestamp"]} for d in detections[:50]],
-            indent=2,
-        )
-    else:
-        detection_text = "No objects were detected by the CV model in this video."
+    detection_text = _format_detection_prompt(detections, summary)
 
     vi_context = ""
     if vi_insights:
@@ -1239,7 +1288,7 @@ def _complete_analysis(video_id: str, vi_insights: dict | None):
         )
 
     ai_response = _call_foundry_local(
-        f"Analyze these drone flight detections and provide a summary:\n{detection_text}{vi_context}",
+        f"Cell Tower Inspection Report — analyze these drone flight detections:\n{detection_text}{vi_context}",
         system=SYSTEM_PROMPT,
     )
     if ai_response:

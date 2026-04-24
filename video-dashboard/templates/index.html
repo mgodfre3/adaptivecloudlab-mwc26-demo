@@ -531,7 +531,7 @@
       tr.innerHTML = `
         <td>${d.frame}</td>
         <td>${timeStr}</td>
-        <td><span class="label-badge ${isAnom ? 'anomaly' : ''}">${d.label}</span></td>
+        <td><span class="label-badge ${isAnom ? 'anomaly' : ''}">${d.display_label || d.label}</span></td>
         <td><span class="conf-bar" style="width:${barWidth}px;${isAnom ? 'background:var(--red)' : ''}"></span>${confPct}%</td>
         <td>${isAnom ? '⚠️' : '✓'}</td>
       `;
