@@ -52,6 +52,14 @@ data:
   MQTT_BROKER_PORT: "1883"
   MQTT_TOPIC_PREFIX: "drone/telemetry"
 
+  # Map / location — change these to relocate the demo to any city
+  MAP_LOCATION_NAME: "${MAP_LOCATION_NAME}"
+  MAP_CENTER_LAT: "${MAP_CENTER_LAT}"
+  MAP_CENTER_LON: "${MAP_CENTER_LON}"
+  MAP_BASE_LAT: "${MAP_BASE_LAT}"
+  MAP_BASE_LON: "${MAP_BASE_LON}"
+  MAP_ZOOM: "${MAP_ZOOM}"
+
 ---
 # ── Dashboard Deployment ─────────────────────────────────────────────────────
 apiVersion: apps/v1
