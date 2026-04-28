@@ -477,4 +477,63 @@
   });
   towerClose.addEventListener("click", closeTowerOverlay);
 
+  // ── AI Chat Panel ──────────────────────────────────────────────────
+  const chatBtn      = document.getElementById("chat-btn");
+  const chatPanel    = document.getElementById("chat-panel");
+  const chatClose    = document.getElementById("chat-close");
+  const chatForm     = document.getElementById("chat-form");
+  const chatInput    = document.getElementById("chat-input");
+  const chatMessages = document.getElementById("chat-messages");
+  const chatModelTag = document.getElementById("chat-model-tag");
+
+  function toggleChat() {
+    const hidden = chatPanel.classList.toggle("hidden");
+    chatBtn.classList.toggle("active", !hidden);
+    if (!hidden) chatInput.focus();
+  }
+
+  chatBtn.addEventListener("click", toggleChat);
+  chatClose.addEventListener("click", toggleChat);
+
+  function appendChatMsg(text, role) {
+    const div = document.createElement("div");
+    div.className = "chat-msg chat-msg-" + role;
+    div.innerHTML = `<div class="chat-msg-content">${escapeHtml(text)}</div>`;
+    chatMessages.appendChild(div);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+    return div;
+  }
+
+  function escapeHtml(str) {
+    const d = document.createElement("div");
+    d.textContent = str;
+    return d.innerHTML;
+  }
+
+  chatForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const msg = chatInput.value.trim();
+    if (!msg) return;
+    chatInput.value = "";
+    appendChatMsg(msg, "user");
+
+    // Show typing indicator
+    const typing = appendChatMsg("Thinking…", "ai typing");
+
+    try {
+      const resp = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: msg }),
+      });
+      const data = await resp.json();
+      typing.remove();
+      appendChatMsg(data.reply || "No response.", "ai");
+      if (data.model && chatModelTag) chatModelTag.textContent = data.model;
+    } catch (err) {
+      typing.remove();
+      appendChatMsg("Failed to reach Edge AI. Is the model running?", "ai error");
+    }
+  });
+
 })();

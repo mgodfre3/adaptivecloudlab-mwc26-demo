@@ -44,6 +44,7 @@
       <span id="mode-badge" class="badge badge-info">—</span>
       <button id="heatmap-btn" class="btn-tower" title="Toggle signal heatmap">🗺️ Signal Map</button>
       <button id="tower-btn" class="btn-tower" title="Toggle cell tower map">📡 Cell Towers</button>
+      <button id="chat-btn" class="btn-tower" title="Chat with Edge AI">💬 AI Chat</button>
       <button id="reset-btn" class="btn-reset" title="Reset all drones">↺ Reset Drones</button>
       <time id="clock"></time>
     </div>
@@ -129,6 +130,33 @@
       <div id="drone-cards"></div>
     </aside>
   </main>
+
+  <!-- ─── AI Chat Panel ──────────────────────────────────────────────── -->
+  <div id="chat-panel" class="chat-panel hidden">
+    <div class="chat-header">
+      <div class="chat-title">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        </svg>
+        <span>Edge AI Chat</span>
+        <span id="chat-model-tag" class="ai-model-tag">—</span>
+      </div>
+      <button id="chat-close" class="tower-close-btn" title="Close">✕</button>
+    </div>
+    <div id="chat-messages" class="chat-messages">
+      <div class="chat-msg chat-msg-ai">
+        <div class="chat-msg-content">Ask me anything about the drone fleet, signal quality, or network performance.</div>
+      </div>
+    </div>
+    <form id="chat-form" class="chat-input-bar" autocomplete="off">
+      <input id="chat-input" type="text" placeholder="Ask about fleet status…" maxlength="500" />
+      <button type="submit" id="chat-send" title="Send">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/>
+        </svg>
+      </button>
+    </form>
+  </div>
 
   <script src="/static/js/app.js"></script>
 </body>
