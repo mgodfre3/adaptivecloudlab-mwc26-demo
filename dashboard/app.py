@@ -106,6 +106,16 @@ def api_ai_insights():
     return jsonify(ai_insights)
 
 
+@app.route("/cell-towers")
+def cell_towers():
+    """Self-contained cell tower coverage map (loaded in iframe overlay)."""
+    return render_template("cell_towers.html",
+                           center_lat=MAP_CENTER_LAT,
+                           center_lon=MAP_CENTER_LON,
+                           zoom=MAP_ZOOM,
+                           location_name=MAP_LOCATION_NAME)
+
+
 @app.route("/api/reset", methods=["POST"])
 def api_reset():
     """Retire all active drones and reset the fleet."""
