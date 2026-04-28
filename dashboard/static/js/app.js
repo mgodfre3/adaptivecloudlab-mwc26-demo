@@ -133,6 +133,7 @@
     Object.keys(drones).forEach(k => delete drones[k]);
     cardsEl.innerHTML = "";
     updateAggregates();
+    clearHeatmap();
   });
 
   // ── Main handler ──────────────────────────────────────────────────────
@@ -180,6 +181,9 @@
     if (drone.trail.length > TRAIL_LEN) drone.trail.shift();
     drone.trailLine.setLatLngs(drone.trail);
     drone.trailLine.setStyle({ color });
+
+    // Record signal sample for heatmap grid
+    recordHeatSample(lat, lng, rsrp);
 
     // Update card
     upsertCard(id, d);
@@ -374,6 +378,67 @@
   }
   fetchAiInsights();
   setInterval(fetchAiInsights, 15000);
+
+  // ── Signal Heatmap Grid ─────────────────────────────────────────────
+  // Paints map grid cells with rolling-average RSRP as drones fly through.
+  const GRID_SIZE = 0.0018;          // ~200 m cell at Denver latitude
+  const heatCells = {};              // "latKey,lonKey" → { rect, samples: [rsrp…] }
+  const heatLayer = L.layerGroup();
+  let heatmapVisible = false;
+  const heatBtn = document.getElementById("heatmap-btn");
+  const MAX_SAMPLES = 20;            // rolling window per cell
+
+  function gridKey(lat, lon) {
+    const gLat = Math.floor(lat / GRID_SIZE) * GRID_SIZE;
+    const gLon = Math.floor(lon / GRID_SIZE) * GRID_SIZE;
+    return `${gLat.toFixed(5)},${gLon.toFixed(5)}`;
+  }
+
+  function heatColor(rsrp) {
+    if (rsrp >= -80)  return { fill: "#22c55e", opacity: 0.30 };   // good – green
+    if (rsrp >= -100) return { fill: "#f59e0b", opacity: 0.28 };   // ok   – amber
+    return { fill: "#ef4444", opacity: 0.32 };                     // poor – red
+  }
+
+  function recordHeatSample(lat, lon, rsrp) {
+    if (!heatmapVisible || rsrp <= -900) return;          // skip if hidden or no data
+    const key = gridKey(lat, lon);
+    if (!heatCells[key]) {
+      const gLat = Math.floor(lat / GRID_SIZE) * GRID_SIZE;
+      const gLon = Math.floor(lon / GRID_SIZE) * GRID_SIZE;
+      const bounds = [[gLat, gLon], [gLat + GRID_SIZE, gLon + GRID_SIZE]];
+      const { fill, opacity } = heatColor(rsrp);
+      const rect = L.rectangle(bounds, {
+        color: fill, fillColor: fill, fillOpacity: opacity,
+        weight: 0.5, opacity: 0.25, interactive: false,
+      });
+      heatLayer.addLayer(rect);
+      heatCells[key] = { rect, samples: [rsrp] };
+    } else {
+      const cell = heatCells[key];
+      cell.samples.push(rsrp);
+      if (cell.samples.length > MAX_SAMPLES) cell.samples.shift();
+      const avg = cell.samples.reduce((a, b) => a + b, 0) / cell.samples.length;
+      const { fill, opacity } = heatColor(avg);
+      cell.rect.setStyle({ color: fill, fillColor: fill, fillOpacity: opacity });
+    }
+  }
+
+  function clearHeatmap() {
+    heatLayer.clearLayers();
+    Object.keys(heatCells).forEach(k => delete heatCells[k]);
+  }
+
+  heatBtn.addEventListener("click", () => {
+    heatmapVisible = !heatmapVisible;
+    if (heatmapVisible) {
+      heatLayer.addTo(map);
+      heatBtn.classList.add("active");
+    } else {
+      map.removeLayer(heatLayer);
+      heatBtn.classList.remove("active");
+    }
+  });
 
   // ── Cell Tower Overlay ───────────────────────────────────────────────
   const towerBtn     = document.getElementById("tower-btn");
