@@ -33,8 +33,9 @@ data:
   EDGE_AI_MODEL: "${EDGE_AI_MODEL}"
   VI_ENDPOINT: "http://videoindexer.video-analysis.svc:80"
   DATA_DIR: "/data"
-  CV_MODEL_PATH: "/models/yolov8s.onnx"
+  CV_MODEL_PATH: "/models/yolov8s-antenna.onnx"
   CV_CONFIDENCE_THRESHOLD: "${CV_CONFIDENCE_THRESHOLD}"
+  CV_FRAME_SKIP: "${CV_FRAME_SKIP}"
 
 ---
 # ── PVC for video storage (Longhorn RWX) ─────────────────────────────────────
@@ -88,13 +89,16 @@ spec:
           volumeMounts:
             - name: video-data
               mountPath: /data
+            - name: video-data
+              mountPath: /models
+              subPath: models
           resources:
             requests:
-              cpu: 200m
-              memory: 256Mi
+              cpu: "1"
+              memory: 1Gi
             limits:
-              cpu: 500m
-              memory: 512Mi
+              cpu: "4"
+              memory: 4Gi
           readinessProbe:
             httpGet:
               path: /

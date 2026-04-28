@@ -43,6 +43,7 @@ from flask import Flask, render_template, jsonify, request, send_from_directory
 from flask_socketio import SocketIO
 
 from vi_client import VideoIndexerClient
+import cv_inference
 
 # ── Load config ──────────────────────────────────────────────────────────────
 _here = Path(__file__).resolve().parent
@@ -56,6 +57,9 @@ EDGE_AI_MODEL = os.getenv("EDGE_AI_MODEL", "Phi-4-mini-instruct-cuda-gpu:5")
 EDGE_AI_API_KEY = os.getenv("EDGE_AI_API_KEY", "")
 DATA_DIR = Path(os.getenv("DATA_DIR", "/data"))
 FLASK_SECRET = os.getenv("FLASK_SECRET_KEY", secrets.token_hex(32))
+CV_MODEL_PATH = os.getenv("CV_MODEL_PATH", "/models/yolov8s-antenna.onnx")
+CV_CONFIDENCE = float(os.getenv("CV_CONFIDENCE_THRESHOLD", "0.5"))
+CV_FRAME_SKIP = int(os.getenv("CV_FRAME_SKIP", "15"))
 
 # ── Flask + Socket.IO ────────────────────────────────────────────────────────
 app = Flask(__name__)
@@ -255,11 +259,13 @@ def _generate_summary(video_cfg: dict, detections: list[dict]) -> dict:
 
 
 def _seed_demo_videos():
-    """Populate the store with pre-analysed demo videos."""
+    """Populate the store with pre-analysed demo videos (synthetic placeholder data)."""
     for cfg in DEMO_VIDEOS:
         vid_id = str(uuid.uuid4())[:8]
         detections = _generate_detections(cfg)
         summary = _generate_summary(cfg, detections)
+        summary["cv_source"] = "demo-synthetic"
+        summary["ai_source"] = "demo-generated"
         with videos_lock:
             videos[vid_id] = {
                 "id": vid_id,
@@ -269,6 +275,7 @@ def _seed_demo_videos():
                 "duration": cfg["duration"],
                 "detections": detections,
                 "summary": summary,
+                "cv_source": "demo-synthetic",
                 "pipeline": {
                     "upload": "complete",
                     "cv_inference": "complete",
@@ -338,12 +345,109 @@ def _check_video_indexer() -> bool:
         return False
 
 
+def _build_summary(filename: str, detections: list[dict], cv_source: str, duration: float,
+                   enrichment: dict | None = None) -> dict:
+    """Build a summary from real (or empty) detection results."""
+    labels: dict[str, int] = {}
+    for d in detections:
+        labels[d["label"]] = labels.get(d["label"], 0) + 1
+
+    avg_conf = round(sum(d["confidence"] for d in detections) / max(len(detections), 1), 2)
+
+    if not detections:
+        condition = "No target objects were detected in this video."
+        severity = "nominal"
+    elif len(detections) <= 3:
+        condition = f"{len(detections)} object(s) detected — limited findings."
+        severity = "nominal"
+    else:
+        condition = f"{len(detections)} objects detected across the flight."
+        severity = "advisory"
+
+    label_summary = ", ".join(f"{count} {label}" for label, count in sorted(labels.items(), key=lambda x: -x[1]))
+
+    # Build enriched AI summary text
+    enrich_text = ""
+    if enrichment:
+        by_size = enrichment.get("by_size", {})
+        by_pos = enrichment.get("by_position", {})
+        by_conf = enrichment.get("by_confidence", {})
+        segs = enrichment.get("segment_count", 0)
+
+        size_parts = [f"{v} {k}" for k, v in sorted(by_size.items(), key=lambda x: -x[1])]
+        pos_parts = [f"{v} in {k} frame" for k, v in sorted(by_pos.items(), key=lambda x: -x[1])]
+        conf_parts = [f"{v} {k}-confidence" for k, v in sorted(by_conf.items(), key=lambda x: -x[1])]
+
+        enrich_text = (
+            f" Size distribution: {', '.join(size_parts)}."
+            f" Frame position: {', '.join(pos_parts)}."
+            f" Confidence breakdown: {', '.join(conf_parts)}."
+            f" Found across {segs} continuous detection segment(s)."
+        )
+
+    return {
+        "filename": filename,
+        "total_detections": len(detections),
+        "unique_labels": len(labels),
+        "label_counts": labels,
+        "avg_confidence": avg_conf,
+        "severity": severity,
+        "cv_source": cv_source,
+        "duration": duration,
+        "enrichment": enrichment or {},
+        "ai_summary": (
+            f"Cell Tower Inspection — {filename}: {len(detections)} detections across "
+            f"{round(duration)}s of drone footage. "
+            f"{('Components: ' + label_summary + '. ') if label_summary else ''}"
+            f"{condition} Average confidence: {avg_conf*100:.0f}%.{enrich_text}"
+        ),
+    }
+
+
 SYSTEM_PROMPT = (
-    "You are a drone video analyst working at a cell-tower inspection site. "
-    "Given detection data from a drone flight analyzing cell tower antennas, "
-    "provide a concise, professional summary of findings. Focus on structural "
-    "integrity, anomalies, and maintenance recommendations."
+    "You are a professional cell-tower inspection analyst reviewing drone flight data. "
+    "The detection model identifies cell tower components (antennas, panels, equipment) "
+    "using a YOLOv8 model trained on aerial cell tower imagery.\n\n"
+    "Given the structured detection data below, produce a concise inspection report with:\n"
+    "1. **Detection Overview**: What was found, total counts, and class breakdown\n"
+    "2. **Spatial Analysis**: Where detections cluster in the frame "
+    "(upper=top of structure, mid=mid-tower, lower=base/ground equipment)\n"
+    "3. **Confidence Assessment**: Detection reliability — "
+    "high-confidence detections are clear identifications, "
+    "moderate/low may indicate partially visible or distant components\n"
+    "4. **Temporal Pattern**: When detections occur during the flight, "
+    "continuous vs intermittent sightings\n\n"
+    "Be factual. Only describe what the data shows. Do not invent detections, "
+    "infer damage, or assume conditions not supported by the data. "
+    "Use professional inspection language."
 )
+
+
+def _format_detection_prompt(detections: list[dict], summary: dict) -> str:
+    """Format detection data + enrichment for LLM consumption."""
+    if not detections:
+        return "No objects were detected by the CV model in this video."
+
+    text = json.dumps(
+        [{"label": d["label"], "confidence": d["confidence"],
+          "timestamp": d["timestamp"],
+          "size_band": d.get("size_band", ""),
+          "vertical_band": d.get("vertical_band", ""),
+          "confidence_band": d.get("confidence_band", "")}
+         for d in detections[:50]],
+        indent=2,
+    )
+    enrich = summary.get("enrichment", {})
+    if enrich:
+        text += (
+            f"\n\nAggregated Analysis:\n"
+            f"- By class: {json.dumps(enrich.get('by_class', {}))}\n"
+            f"- By detection size: {json.dumps(enrich.get('by_size', {}))}\n"
+            f"- By frame position: {json.dumps(enrich.get('by_position', {}))}\n"
+            f"- By confidence level: {json.dumps(enrich.get('by_confidence', {}))}\n"
+            f"- Detection segments: {enrich.get('segment_count', 0)} continuous group(s)\n"
+        )
+    return text
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -359,31 +463,52 @@ def _process_video(video_id: str):
 
     file_path = vid.get("file_path")
 
-    # ── Step 1: CV Inference (demo detections) ────────────────────────
+    # ── Step 1: CV Inference ─────────────────────────────────────────
     _update_pipeline(video_id, "cv_inference", "running")
     socketio.emit("processing_update", {"id": video_id, "step": "cv_inference", "status": "running"})
 
-    time.sleep(random.uniform(2.0, 4.0))
+    cv_source = "unavailable"
+    detections = []
+    cv_summary = {}
 
-    cfg = {
-        "filename": vid["filename"],
-        "duration": vid.get("duration") or random.uniform(60, 240),
-        "tower": random.choice(DEMO_TOWER_LOCATIONS),
-        "detection_count": random.randint(8, 30),
-        "anomaly_rate": random.uniform(0.0, 0.25),
-    }
-    detections = _generate_detections(cfg)
+    if file_path and cv_inference.is_model_available(CV_MODEL_PATH):
+        try:
+            def _progress(processed, total):
+                socketio.emit("cv_progress", {
+                    "id": video_id,
+                    "frames_processed": processed,
+                    "total_frames": total,
+                })
+
+            detections, cv_summary = cv_inference.run_inference(
+                video_path=file_path,
+                model_path=CV_MODEL_PATH,
+                confidence_threshold=CV_CONFIDENCE,
+                frame_skip=CV_FRAME_SKIP,
+                progress_callback=_progress,
+            )
+            cv_source = "onnx-yolov8"
+            app.logger.info("[%s] CV inference complete: %d detections", video_id, len(detections))
+        except Exception as cv_exc:
+            app.logger.error("[%s] CV inference failed: %s", video_id, cv_exc)
+            cv_source = "error"
+    else:
+        app.logger.warning("[%s] ONNX model not available at %s — CV inference skipped", video_id, CV_MODEL_PATH)
+
+    duration = cv_summary.get("duration") or vid.get("duration") or 0
 
     with videos_lock:
         videos[video_id]["detections"] = detections
-        videos[video_id]["duration"] = cfg["duration"]
+        videos[video_id]["duration"] = duration
+        videos[video_id]["cv_source"] = cv_source
 
-    _update_pipeline(video_id, "cv_inference", "complete")
+    _update_pipeline(video_id, "cv_inference", "complete" if cv_source == "onnx-yolov8" else "skipped")
     socketio.emit("detection_complete", {
         "id": video_id,
         "detection_count": len(detections),
+        "cv_source": cv_source,
         "step": "cv_inference",
-        "status": "complete",
+        "status": "complete" if cv_source == "onnx-yolov8" else "skipped",
     })
 
     # ── Step 2: Video Indexer (real upload + polling) ─────────────────
@@ -392,6 +517,7 @@ def _process_video(video_id: str):
 
     vi_success = False
     vi_insights = None
+    vi_video_id = None
 
     if vi_client.configured and file_path:
         try:
@@ -489,11 +615,25 @@ def _process_video(video_id: str):
     with videos_lock:
         videos[video_id]["vi_insights"] = vi_insights
 
+    # ── Step 2b: BYOM — Push YOLO detections as VI custom insights ───
+    if vi_success and vi_video_id and detections and vi_client.configured:
+        try:
+            app.logger.info("[%s] BYOM: Patching %d detections into VI video %s",
+                           video_id, len(detections), vi_video_id)
+            vi_client.patch_custom_insights(
+                video_id=vi_video_id,
+                detections=detections,
+                model_name="Antenna Detection (YOLOv8s — Edge)",
+            )
+        except Exception as byom_exc:
+            app.logger.warning("[%s] BYOM patch failed (non-fatal): %s", video_id, byom_exc)
+
     # ── Step 3: AI Summary ───────────────────────────────────────────
     _update_pipeline(video_id, "ai_summary", "running")
     socketio.emit("processing_update", {"id": video_id, "step": "ai_summary", "status": "running"})
 
-    summary = _generate_summary(cfg, detections)
+    summary = _build_summary(vid["filename"], detections, cv_source, duration,
+                             enrichment=cv_summary.get("enrichment"))
 
     # Enrich summary with real VI insights if available
     if vi_insights:
@@ -514,11 +654,7 @@ def _process_video(video_id: str):
             }
 
     # Try Foundry Local for AI summary
-    detection_text = json.dumps(
-        [{"label": d["label"], "confidence": d["confidence"],
-          "is_anomaly": d["is_anomaly"], "timestamp": d["timestamp"]} for d in detections],
-        indent=2,
-    )
+    detection_text = _format_detection_prompt(detections, summary)
 
     vi_context = ""
     if vi_insights:
@@ -533,7 +669,7 @@ def _process_video(video_id: str):
         )
 
     ai_response = _call_foundry_local(
-        f"Analyze these drone flight detections and provide a summary:\n{detection_text}{vi_context}",
+        f"Cell Tower Inspection Report — analyze these drone flight detections:\n{detection_text}{vi_context}",
         system=SYSTEM_PROMPT,
     )
     if ai_response:
@@ -653,6 +789,36 @@ def list_videos():
     return jsonify(result)
 
 
+@app.route("/api/videos/<video_id>", methods=["DELETE"])
+def delete_video(video_id: str):
+    """Delete a video and all its data."""
+    with videos_lock:
+        vid = videos.pop(video_id, None)
+    if not vid:
+        return jsonify({"error": "Video not found"}), 404
+
+    # Delete the uploaded file
+    file_path = vid.get("file_path")
+    if file_path:
+        try:
+            Path(file_path).unlink(missing_ok=True)
+        except Exception as e:
+            app.logger.warning("Failed to delete file %s: %s", file_path, e)
+
+    # Remove from SQLite
+    try:
+        conn = _db()
+        conn.execute("DELETE FROM vi_videos WHERE local_id=?", (video_id,))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        app.logger.warning("Failed to delete DB record for %s: %s", video_id, e)
+
+    socketio.emit("video_deleted", {"id": video_id})
+    app.logger.info("Deleted video %s (%s)", video_id, vid.get("filename"))
+    return jsonify({"deleted": video_id}), 200
+
+
 @app.route("/api/videos/<video_id>/detections")
 def get_detections(video_id: str):
     """Get detection results JSON for a video."""
@@ -696,7 +862,7 @@ def get_geojson(video_id: str):
                 "confidence": d["confidence"],
                 "frame": d["frame"],
                 "timestamp": d["timestamp"],
-                "is_anomaly": d["is_anomaly"],
+                "is_anomaly": d.get("is_anomaly", False),
             },
         })
 
@@ -728,8 +894,11 @@ def query_video(video_id: str):
         f"Detections ({len(detections)} total):\n"
         + json.dumps(
             [{"label": d["label"], "confidence": d["confidence"],
-              "is_anomaly": d["is_anomaly"], "timestamp": d["timestamp"]}
-             for d in detections[:50]],  # limit context size
+              "timestamp": d["timestamp"],
+              "size_band": d.get("size_band", ""),
+              "vertical_band": d.get("vertical_band", ""),
+              "display_label": d.get("display_label", d.get("label", ""))}
+             for d in detections[:50]],
             indent=2,
         )
     )
@@ -754,24 +923,27 @@ def _demo_query_response(question: str, vid: dict) -> str:
     q = question.lower()
 
     if "antenna" in q:
-        count = summary.get("label_counts", {}).get("antenna_panel", 0)
-        return (f"Detected {count} antenna panels across the flight. "
-                f"All panels appear properly mounted with an average detection "
-                f"confidence of {summary.get('avg_confidence', 0.85)*100:.0f}%.")
-    elif "anomal" in q or "damage" in q or "rust" in q:
-        anom = summary.get("anomaly_count", 0)
-        if anom == 0:
-            return "No anomalies were detected during this flight. All inspected structures appear to be in good condition."
-        return (f"{anom} potential anomalies were flagged, including possible "
-                f"corrosion or weathering damage. A closer physical inspection "
-                f"is recommended for the flagged areas.")
+        count = summary.get("label_counts", {}).get("cellular_antenna", 0)
+        if count == 0:
+            return "No cellular antennas were detected in this video."
+        return (f"Detected {count} cellular antenna(s) across the flight. "
+                f"Average detection confidence: {summary.get('avg_confidence', 0)*100:.0f}%.")
+    elif "how many" in q or "count" in q or "detect" in q:
+        total = summary.get("total_detections", len(detections))
+        if total == 0:
+            return "No objects were detected by the CV model in this video."
+        label_counts = summary.get("label_counts", {})
+        breakdown = ", ".join(f"{c} {l}" for l, c in label_counts.items())
+        return f"{total} object(s) detected: {breakdown}."
     elif "summary" in q or "overview" in q:
         return summary.get("ai_summary", "Analysis is still processing.")
     else:
+        total = len(detections)
+        if total == 0:
+            return f"Analysis of {vid['filename']}: no target objects were detected."
         return (f"Based on the analysis of {vid['filename']}: "
-                f"{len(detections)} objects were detected with an average "
-                f"confidence of {summary.get('avg_confidence', 0.85)*100:.0f}%. "
-                f"The inspection covers {summary.get('tower', 'the target area')}.")
+                f"{total} objects were detected with an average "
+                f"confidence of {summary.get('avg_confidence', 0)*100:.0f}%.")
 
 
 @app.route("/api/ai-status")
@@ -1039,41 +1211,48 @@ def _complete_analysis(video_id: str, vi_insights: dict | None):
     if not vid:
         return
 
-    # Generate demo detections if none exist
-    if not vid.get("detections"):
-        cfg = {
-            "filename": vid["filename"],
-            "duration": vid.get("duration") or random.uniform(60, 240),
-            "tower": random.choice(DEMO_TOWER_LOCATIONS),
-            "detection_count": random.randint(8, 30),
-            "anomaly_rate": random.uniform(0.0, 0.25),
-        }
-        detections = _generate_detections(cfg)
-        with videos_lock:
-            videos[video_id]["detections"] = detections
-            videos[video_id]["duration"] = cfg["duration"]
-        socketio.emit("detection_complete", {
-            "id": video_id, "detection_count": len(detections),
-            "step": "cv_inference", "status": "complete",
-        })
-    else:
-        detections = vid["detections"]
-        cfg = {
-            "filename": vid["filename"],
-            "duration": vid.get("duration") or 120,
-            "tower": random.choice(DEMO_TOWER_LOCATIONS),
-            "detection_count": len(detections),
-            "anomaly_rate": 0.1,
-        }
+    # Run real CV inference if detections are missing and model is available
+    detections = vid.get("detections", [])
+    cv_source = vid.get("cv_source", "unknown")
+    duration = vid.get("duration") or 0
+    cv_summary = {}
+
+    if not detections and vid.get("file_path") and cv_inference.is_model_available(CV_MODEL_PATH):
+        try:
+            detections, cv_summary = cv_inference.run_inference(
+                video_path=vid["file_path"],
+                model_path=CV_MODEL_PATH,
+                confidence_threshold=CV_CONFIDENCE,
+                frame_skip=CV_FRAME_SKIP,
+            )
+            cv_source = "onnx-yolov8"
+            duration = cv_summary.get("duration", duration)
+            with videos_lock:
+                videos[video_id]["detections"] = detections
+                videos[video_id]["duration"] = duration
+                videos[video_id]["cv_source"] = cv_source
+        except Exception as cv_exc:
+            app.logger.warning("[%s] CV inference failed during recovery: %s", video_id, cv_exc)
+            cv_source = "unavailable"
+    elif not detections:
+        app.logger.info("[%s] No detections and no model — CV inference unavailable", video_id)
+        cv_source = "unavailable"
+
+    socketio.emit("detection_complete", {
+        "id": video_id, "detection_count": len(detections),
+        "cv_source": cv_source,
+        "step": "cv_inference", "status": "complete" if cv_source == "onnx-yolov8" else "skipped",
+    })
 
     with videos_lock:
-        videos[video_id]["pipeline"]["cv_inference"] = "complete"
+        videos[video_id]["pipeline"]["cv_inference"] = "complete" if detections else "skipped"
         videos[video_id]["pipeline"]["ai_summary"] = "running"
 
     socketio.emit("processing_update", {"id": video_id, "step": "ai_summary", "status": "running"})
 
     # Build summary
-    summary = _generate_summary(cfg, detections)
+    summary = _build_summary(vid["filename"], detections, cv_source, duration,
+                             enrichment=cv_summary.get("enrichment"))
 
     # Enrich with real VI insights
     if vi_insights:
@@ -1094,11 +1273,7 @@ def _complete_analysis(video_id: str, vi_insights: dict | None):
             }
 
     # Try Foundry Local for AI summary
-    detection_text = json.dumps(
-        [{"label": d["label"], "confidence": d["confidence"],
-          "is_anomaly": d["is_anomaly"], "timestamp": d["timestamp"]} for d in detections[:50]],
-        indent=2,
-    )
+    detection_text = _format_detection_prompt(detections, summary)
 
     vi_context = ""
     if vi_insights:
@@ -1113,14 +1288,14 @@ def _complete_analysis(video_id: str, vi_insights: dict | None):
         )
 
     ai_response = _call_foundry_local(
-        f"Analyze these drone flight detections and provide a summary:\n{detection_text}{vi_context}",
+        f"Cell Tower Inspection Report — analyze these drone flight detections:\n{detection_text}{vi_context}",
         system=SYSTEM_PROMPT,
     )
     if ai_response:
         summary["ai_summary"] = ai_response
         summary["ai_source"] = "foundry-local"
     else:
-        summary["ai_source"] = "demo-generated"
+        summary["ai_source"] = "rule-engine"
 
     with videos_lock:
         videos[video_id]["summary"] = summary
@@ -1142,5 +1317,6 @@ if __name__ == "__main__":
     _seed_demo_videos()
     app.logger.info("Video Analysis Dashboard starting on port %d", PORT)
     app.logger.info("VI configured: %s (account: %s)", vi_client.configured, vi_client.account_id)
+    app.logger.info("CV model: %s (available: %s)", CV_MODEL_PATH, cv_inference.is_model_available(CV_MODEL_PATH))
     app.logger.info("Demo videos seeded: %d", len(videos))
     socketio.run(app, host="0.0.0.0", port=PORT, debug=False, allow_unsafe_werkzeug=True)

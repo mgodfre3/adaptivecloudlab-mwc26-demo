@@ -33,8 +33,9 @@ data:
   EDGE_AI_MODEL: "Phi-4-mini-instruct-cuda-gpu:5"
   VI_ENDPOINT: "http://videoindexer.video-analysis.svc:80"
   DATA_DIR: "/data"
-  CV_MODEL_PATH: "/models/yolov8s.onnx"
+  CV_MODEL_PATH: "/models/yolov8s-antenna.onnx"
   CV_CONFIDENCE_THRESHOLD: "0.5"
+  CV_FRAME_SKIP: "15"
 
 ---
 # ── PVC for video storage (Longhorn RWX) ─────────────────────────────────────
@@ -85,13 +86,16 @@ spec:
           volumeMounts:
             - name: video-data
               mountPath: /data
+            - name: video-data
+              mountPath: /models
+              subPath: models
           resources:
             requests:
-              cpu: 200m
-              memory: 256Mi
+              cpu: "1"
+              memory: 1Gi
             limits:
-              cpu: 500m
-              memory: 512Mi
+              cpu: "4"
+              memory: 4Gi
           readinessProbe:
             httpGet:
               path: /
@@ -172,7 +176,7 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
     nginx.ingress.kubernetes.io/upstream-hash-by: "$remote_addr"
     # Allow large request bodies (video uploads)
-    nginx.ingress.kubernetes.io/proxy-body-size: "500m"
+    nginx.ingress.kubernetes.io/proxy-body-size: "2g"
 spec:
   ingressClassName: nginx
   tls:
@@ -206,7 +210,7 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
     nginx.ingress.kubernetes.io/upstream-hash-by: "$remote_addr"
-    nginx.ingress.kubernetes.io/proxy-body-size: "500m"
+    nginx.ingress.kubernetes.io/proxy-body-size: "2g"
 spec:
   ingressClassName: nginx
   tls:

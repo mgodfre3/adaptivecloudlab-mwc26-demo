@@ -18,3 +18,12 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+
+*.onnx
+*.pt
+
+# Training artifacts
+cv-inference/datasets/
+cv-inference/runs/
+cv-inference/_azureml_conda.yml
+cv-inference/_azureml_output/

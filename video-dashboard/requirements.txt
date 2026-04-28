@@ -6,3 +6,7 @@ requests>=2.31
 httpx>=0.27
 werkzeug>=3.0
 azure-identity>=1.15
+# CV inference (YOLOv8 ONNX object detection)
+opencv-python-headless>=4.9.0
+numpy>=1.26.0
+onnxruntime>=1.18.0

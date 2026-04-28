@@ -1,0 +1,8 @@
+datasets/
+runs/
+_azureml_conda.yml
+_azureml_output/
+*.onnx
+*.pt
+__pycache__/
+*.pyc
