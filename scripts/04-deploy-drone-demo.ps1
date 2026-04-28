@@ -125,6 +125,25 @@ if (Test-Path $simEnv) {
 # Create namespace first (idempotent)
 kubectl create namespace drone-demo --dry-run=client -o yaml | kubectl apply -f -
 
+# Create ACR pull secret using admin credentials (these don't expire, unlike OAuth tokens)
+$AcrRegistryName = ($AcrName -split '\.')[0]
+Write-Host "  Creating ACR pull secret (admin credentials)..."
+$acrCreds = az acr credential show --name $AcrRegistryName -o json 2>&1 | ConvertFrom-Json
+if (-not $acrCreds.username) {
+    Write-Host "ERROR: Could not retrieve ACR admin credentials. Ensure admin is enabled: az acr update -n $AcrRegistryName --admin-enabled true" -ForegroundColor Red
+    exit 1
+}
+$acrPullArgs = @(
+    "create", "secret", "docker-registry", "acr-pull-secret",
+    "-n", "drone-demo",
+    "--docker-server=$AcrName",
+    "--docker-username=$($acrCreds.username)",
+    "--docker-password=$($acrCreds.passwords[0].value)",
+    "--dry-run=client", "-o", "yaml"
+)
+& kubectl @acrPullArgs | kubectl apply -f -
+Write-Host "  ACR pull secret applied"
+
 # Create the secret
 $secretArgs = @(
     "create", "secret", "generic", "drone-demo-secrets",
