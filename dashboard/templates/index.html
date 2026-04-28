@@ -35,10 +35,40 @@
       <span id="conn-badge" class="badge badge-off">DISCONNECTED</span>
       <span id="ai-badge" class="badge badge-info">AI: —</span>
       <span id="mode-badge" class="badge badge-info">—</span>
+      <button id="tower-btn" class="btn-tower" title="Toggle cell tower map">📡 Cell Towers</button>
       <button id="reset-btn" class="btn-reset" title="Reset all drones">↺ Reset Drones</button>
       <time id="clock"></time>
     </div>
   </header>
+
+  <!-- ─── Cell Tower Overlay ──────────────────────────────────────────────── -->
+  <div id="tower-overlay" class="tower-overlay hidden" aria-hidden="true">
+    <div class="tower-overlay-header">
+      <div class="tower-overlay-title">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+          <circle cx="12" cy="12" r="3"/>
+        </svg>
+        <span>Cell Tower Coverage Map</span>
+        <span class="tower-subtitle">Live 5G / LTE Tower Locations</span>
+      </div>
+      <button id="tower-close" class="tower-close-btn" title="Close">✕</button>
+    </div>
+    <div class="tower-overlay-body">
+      <iframe
+        id="tower-iframe"
+        src="about:blank"
+        data-src="https://birendra01-cell-tower-galaxy-visualizer.hf.space"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+        sandbox="allow-scripts allow-forms allow-popups"
+        title="Cell Tower Galaxy Visualizer"
+      ></iframe>
+      <div id="tower-loading" class="tower-loading">
+        <div class="tower-spinner"></div>
+        <span>Loading cell tower data…</span>
+      </div>
+    </div>
+  </div>
 
   <!-- ─── Main layout ──────────────────────────────────────────────────── -->
   <main>
