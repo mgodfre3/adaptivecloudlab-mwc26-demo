@@ -1,10 +1,10 @@
 # Real-Time Drone Network Monitoring & Video Intelligence with Edge AI
 
-**MWC 2026 Demo — Adaptive Cloud Lab**
+**Adaptive Cloud Lab Demo**
 
 Two interconnected edge AI demos running on **AKS Arc (Azure Local)** — showcasing real-time telemetry monitoring and AI-powered video intelligence, all on commodity edge hardware with full data sovereignty.
 
-**Demo 1 — Drone Network Monitor:** A live kiosk showing autonomous drones monitoring 5G network quality across Barcelona. Drones patrol waypoints around 12 landmarks, return to base when battery is low, and are replaced by fresh drones with new callsigns — creating a continuous, realistic fleet lifecycle. The dashboard supports three telemetry data modes: **demo** (built-in synthetic data), **cloud** (Azure IoT Hub), and **edge** (Azure IoT Operations MQTT broker on-cluster). Phi-4 Mini running on an NVIDIA GPU at the edge provides real-time AI-powered insights.
+**Demo 1 — Drone Network Monitor:** A live kiosk showing autonomous drones monitoring 5G network quality across Denver, CO. Drones patrol waypoints around city landmarks, return to base when battery is low, and are replaced by fresh drones with new callsigns — creating a continuous, realistic fleet lifecycle. The dashboard supports three telemetry data modes: **demo** (built-in synthetic data), **cloud** (Azure IoT Hub), and **edge** (Azure IoT Operations MQTT broker on-cluster). Phi-4 Mini running on an NVIDIA GPU at the edge provides real-time AI-powered insights, including an **interactive AI chat** where users can ask questions about fleet status and get natural-language responses from the edge model.
 
 **Demo 2 — Drone Video Intelligence:** Upload drone footage and watch AI process it end-to-end on-premises. A custom YOLOv8 model detects cellular antennas frame-by-frame on the GPU, **Arc Video Indexer** creates a searchable video timeline with scenes, transcription, and OCR, and **Foundry Local (Phi-4 Mini)** generates natural-language summaries and answers questions about the footage — all without any data leaving the edge.
 
@@ -53,15 +53,18 @@ graph LR
 
 ### Drone Network Monitor Dashboard
 
-Real-time kiosk UI showing 5 autonomous drones over Barcelona with live 5G telemetry and Edge AI insights powered by Phi-4 Mini running on an NVIDIA A2 GPU.
+Real-time kiosk UI showing 5 autonomous drones over Denver, CO with live 5G telemetry, Edge AI insights powered by Phi-4 Mini, interactive AI chat, signal quality heatmap, and cell tower coverage map.
 
 ![Drone Network Monitor Dashboard](docs/images/drone-dashboard.png)
 
 **What you're seeing:**
 - **Left panel** — Dark-themed Leaflet map with live drone positions, flight trails, and color-coded signal indicators (green = strong, yellow = moderate, red = weak)
+- **Signal heatmap** — Toggle grid overlay showing ~200m cells colored by rolling-average RSRP as drones fly through areas (green/amber/red)
+- **Cell tower map** — Self-hosted Leaflet overlay with 20 Denver-area 5G/LTE tower locations, coverage radius circles, and frequency band legend
 - **Right panel** — Per-drone telemetry cards showing RSRP, SINR, DL/UL throughput, latency, packet loss, altitude, speed, and battery level
-- **Top-right** — Real-time connection status (`CONNECTED`), AI health indicator (`AI HEALTHY`), and live clock
+- **Top-right** — Real-time connection status (`CONNECTED`), AI health indicator (`AI HEALTHY`), live clock, and toolbar buttons (Signal Map, Cell Towers, AI Chat, Reset Drones)
 - **Edge AI Analysis** — Rule-engine generates instant insights (signal degradation, battery alerts, coverage gaps) while Phi-4 Mini overlays a fleet health summary
+- **AI Chat** — Interactive chat window where users can ask the Phi-4 model questions about the drone fleet and get natural-language responses in real time
 - **Drone lifecycle** — Drones patrol waypoints, return to base at low battery, charge, and are replaced by new drones with NATO callsigns (Alpha → Zulu)
 - **Bottom bar** — Fleet-wide aggregates: average RSRP, average DL throughput, average latency, active drone count, and messages/sec throughput
 
@@ -345,21 +348,55 @@ $env:AZURE_EXTENSION_DIR = "$env:TEMP\az_extensions"
 
 ### Step 3: Deploy Foundry Local AI model
 
-After the operator is installed, apply the model manifests:
+After the operator is installed, create the ModelDeployment:
 
 ```powershell
 # Connect to the cluster
 az connectedk8s proxy --name <cluster> --resource-group <rg>
 
 # Deploy the Phi-4 model on the GPU node
-kubectl apply -f k8s/foundry-local.yaml
+# NOTE: catalog name is "phi-4-mini", NOT "Phi-4-mini-instruct"
+cat <<'EOF' | kubectl apply -f -
+apiVersion: foundrylocal.azure.com/v1
+kind: ModelDeployment
+metadata:
+  name: phi-4-deployment
+  namespace: <foundry-mdl-namespace>   # e.g. mobile-foundry-mdl
+spec:
+  displayName: Phi-4 Mini
+  model:
+    catalog:
+      name: phi-4-mini
+  compute: gpu
+  workloadType: generative
+  replicas: 1
+  port: 5000
+  resources:
+    requests:
+      cpu: "1"
+      memory: "4Gi"
+    limits:
+      cpu: "2"
+      memory: "6Gi"
+      gpu: 1
+  nodeSelector:
+    kubernetes.io/hostname: <gpu-node-name>
+EOF
 
-# Watch the model download and deployment (takes ~3-5 min)
-kubectl get modeldeployment -n foundry-local -w
+# Watch the model download and deployment (takes ~5-8 min for 3.6GB model)
+kubectl get modeldeployment -n <foundry-mdl-namespace> -w
 
-# Verify the inference service is running
-kubectl get svc -n foundry-local
+# Verify the inference service is running (2/2 Ready)
+kubectl get pods -n <foundry-mdl-namespace>
+kubectl get svc -n <foundry-mdl-namespace>
 ```
+
+> **Note:** If the operator CA bundle secret is missing in the model namespace, copy it:
+> ```powershell
+> kubectl get secret <operator-ns>-ca-bundle -n <operator-ns> -o yaml | \
+>   sed "s/namespace: <operator-ns>/namespace: <foundry-mdl-namespace>/" | \
+>   kubectl apply -f -
+> ```
 
 > **Important:** If the Helm OCI install fails with `pending-install`, use the bundled `.tgz`:
 > ```powershell
@@ -383,7 +420,7 @@ cp .env.sample .env
 # Edit .env — fill in EDGE_AI_API_KEY and EDGE_AI_ENDPOINT (see below)
 
 # Port-forward the Foundry Local inference service (in a separate terminal)
-kubectl port-forward svc/phi-4-deployment -n foundry-local 8443:5000
+kubectl port-forward svc/phi-4-deployment -n <foundry-mdl-namespace> 8443:5000
 
 # Run the dashboard
 python app.py
@@ -391,26 +428,34 @@ python app.py
 
 #### How to get `EDGE_AI_ENDPOINT` and `EDGE_AI_API_KEY`
 
-**`EDGE_AI_ENDPOINT`** — This is the local URL exposed by the `kubectl port-forward` command above. When you run `kubectl port-forward svc/phi-4-deployment -n foundry-local 8443:5000`, the endpoint becomes:
+**`EDGE_AI_ENDPOINT`** — When deployed to a Kubernetes cluster, the dashboard connects to the Foundry Local service directly via its ClusterIP service:
 
 ```
-https://localhost:8443
+https://phi-4-deployment.<foundry-mdl-namespace>.svc:5000
 ```
+
+For local development, use `kubectl port-forward`:
+
+```powershell
+kubectl port-forward svc/phi-4-deployment -n <foundry-mdl-namespace> 8443:5000
+```
+
+Then set the endpoint to `https://localhost:8443`.
 
 > If you choose a different local port (e.g. `9443:5000`), update the endpoint accordingly (`https://localhost:9443`).
 
 **`EDGE_AI_API_KEY`** — The API key is auto-generated by the Foundry Local Inference Operator and stored in a Kubernetes secret. Retrieve it with:
 
 ```powershell
-# Get the API key from the Kubernetes secret
-kubectl get secret phi-4-deployment-api-keys -n foundry-local -o jsonpath='{.data.api-key-primary}' | ForEach-Object { [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($_)) }
+# Get the API key from the Kubernetes secret (use your model namespace)
+kubectl get secret phi-4-deployment-api-keys -n <foundry-mdl-namespace> -o jsonpath='{.data.primary-key}' | ForEach-Object { [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($_)) }
 ```
 
 Or on Linux/macOS:
 
 ```bash
-kubectl get secret phi-4-deployment-api-keys -n foundry-local \
-  -o jsonpath='{.data.api-key-primary}' | base64 -d
+kubectl get secret phi-4-deployment-api-keys -n <foundry-mdl-namespace> \
+  -o jsonpath='{.data.primary-key}' | base64 -d
 ```
 
 The key will look like `fndry-pk-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`. Paste it into your `dashboard/.env` file:
@@ -423,9 +468,12 @@ EDGE_AI_API_KEY=fndry-pk-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 ---
 
 Open **http://localhost:5000** in a browser. The dashboard shows:
-- Live Leaflet map of Barcelona with drone positions
+- Live Leaflet map of Denver, CO with drone positions
 - Real-time 5G telemetry cards (RSRP, RSRQ, SINR, throughput)
 - AI-powered fleet insights from Phi-4 (updated every 15 seconds)
+- Interactive AI chat panel (`💬 AI Chat` button)
+- Signal quality heatmap overlay (`🗺️ Signal Map` button)
+- Cell tower coverage map (`📡 Cell Towers` button)
 - Aggregate network statistics
 
 ### Step 5: Run the drone simulator (optional — dashboard has demo mode)
@@ -512,7 +560,7 @@ This URL is served by the NGINX Ingress controller on the AKS Arc cluster via Me
 **Requirements:**
 - You must be connected to the **AdaptiveCloudLab.com network** (the 172.21.229.x subnet must be routable from your machine)
 - Accept the self-signed certificate warning in your browser (the TLS cert is issued by a self-signed ClusterIssuer)
-- The dashboard auto-starts in demo mode with 5 simulated drones over Barcelona
+- The dashboard auto-starts in demo mode with 5 simulated drones over Denver, CO
 - AI insights from Phi-4 (running on the GPU node) update every 15 seconds
 
 ### Network Details
@@ -572,15 +620,16 @@ adaptivecloudlab-mwc26-demo/
 │   ├── grafana-dashboard.json         # Custom Grafana dashboard (cluster + GPU)
 │   └── grafana-ingress.yaml           # Ingress for grafana.adaptivecloudlab.com
 ├── dashboard/
-│   ├── app.py                          # Flask backend (telemetry + AI analysis)
+│   ├── app.py                          # Flask backend (telemetry + AI analysis + chat)
 │   ├── requirements.txt                # Python dependencies
 │   ├── Dockerfile                      # Container build for dashboard
 │   ├── .env.sample                     # Dashboard env template (no secrets)
 │   ├── templates/
-│   │   └── index.html                  # Main HTML template
+│   │   ├── index.html                  # Main HTML template (map, cards, heatmap, chat panel)
+│   │   └── cell_towers.html            # Self-hosted Denver cell tower map (Leaflet)
 │   └── static/
-│       ├── css/style.css               # Dark-theme kiosk styles
-│       └── js/app.js                   # Leaflet map + Socket.IO client
+│       ├── css/style.css               # Dark-theme kiosk styles + chat panel
+│       └── js/app.js                   # Leaflet map + Socket.IO client + heatmap + chat
 ├── video-dashboard/
 │   ├── app.py                          # Flask backend (video upload, pipeline orchestration, AI query)
 │   ├── vi_client.py                    # Arc Video Indexer API client (auth, upload, poll, insights)
@@ -613,13 +662,17 @@ adaptivecloudlab-mwc26-demo/
 | Feature | Description |
 |---|---|
 | **Dark-theme kiosk mode** | Designed for large screens and event booths — auto-refreshing, no user interaction required |
-| **Real-time Leaflet map** | Drone positions on a dark tile layer centered on Barcelona (Fira Gran Via) with colored flight trails and signal-strength indicators |
+| **Real-time Leaflet map** | Drone positions on a dark tile layer centered on Denver, CO with colored flight trails and signal-strength indicators |
+| **Signal quality heatmap** | Toggle `🗺️ Signal Map` overlay that paints ~200m grid cells with rolling-average RSRP color (green ≥ -80 dBm, amber ≥ -100 dBm, red < -100 dBm) as drones fly through areas |
+| **Cell tower coverage map** | Self-hosted `📡 Cell Towers` overlay with 20 Denver-area 5G/LTE/dual-band towers, coverage radius circles, and frequency band legend — loaded in an iframe via `/cell-towers` route |
+| **Interactive AI chat** | `💬 AI Chat` floating panel lets users ask natural-language questions about fleet status; queries are sent to the Foundry Local Phi-4 model with real-time telemetry context, with graceful fallback to rule-engine insights when the model is offline |
 | **5G telemetry cards** | Per-drone metrics: RSRP (dBm), RSRQ (dB), SINR (dB), DL/UL throughput (Mbps), latency (ms), packet loss (%), altitude (m), speed (m/s), battery level |
-| **Drone lifecycle** | Drones patrol 12 Barcelona waypoints, return to base at 18% battery, charge to 92%, and are replaced by new drones with cycling NATO callsigns (Alpha → Zulu) |
+| **Drone lifecycle** | Drones patrol Denver waypoints, return to base at 18% battery, charge to 92%, and are replaced by new drones with cycling NATO callsigns (Alpha → Zulu) |
 | **Edge AI Insights** | Rule-engine generates instant insights (signal degradation, battery alerts, coverage gaps); Phi-4 Mini overlays a one-sentence fleet health summary — no JSON parsing, fully reliable |
 | **Fleet status badges** | Color-coded per-drone status: `PATROLLING` (green), `RETURNING` (yellow), `LAUNCHING` (blue), `CHARGING` (cyan), `LANDING` (orange), `EMERGENCY` (red) |
+| **AI status indicator** | Top-right badge shows fleet health: `AI HEALTHY` (all nominal), `AI DEGRADED` (warning-level issues like weak signal or high latency), `AI CRITICAL` (severe issues like signal loss or drone offline) |
 | **Aggregate statistics** | Bottom bar with fleet-wide averages: RSRP, DL throughput, latency, active drone count, and messages/sec |
-| **Health indicators** | Top-right badges: WebSocket connection status (`CONNECTED`/`DISCONNECTED`), AI fleet health (`AI HEALTHY`/`AI DEGRADED`/`AI CRITICAL`), data mode (`LIVE`/`DEMO`), and live clock |
+| **Health indicators** | Top-right badges: WebSocket connection status (`CONNECTED`/`DISCONNECTED`), AI fleet health (`AI HEALTHY`/`AI DEGRADED`/`AI CRITICAL`), data mode (`LIVE`/`DEMO`), toolbar buttons (`🗺️ Signal Map`, `📡 Cell Towers`, `💬 AI Chat`, `↺ Reset Drones`), and live clock |
 | **Demo mode** | Runs entirely with synthetic data when `DEMO_MODE=true` or `DATA_MODE` is unset — no IoT Hub connection needed |
 | **Three data modes** | `demo` — built-in synthetic data; `cloud` — IoT Hub Event Hub consumer; `edge` — Azure IoT Operations MQTT broker (switch via `DATA_MODE` env var) |
 
@@ -627,8 +680,8 @@ adaptivecloudlab-mwc26-demo/
 
 Each drone follows a continuous autonomous cycle:
 
-1. **Launch** — New drone spawns at the Barcelona base station (`41.3545°N, 2.1279°E`) with a fresh NATO callsign and full battery
-2. **Patrol** — Flies a waypoint-based route through 12 Barcelona landmarks (Sagrada Família, Park Güell, Camp Nou, Port Olímpic, etc.)
+1. **Launch** — New drone spawns at the Denver base station (`39.7437°N, -104.9916°W`) with a fresh NATO callsign and full battery
+2. **Patrol** — Flies a waypoint-based route through Denver landmarks
 3. **Return** — When battery drops below 18%, drone automatically navigates back to base
 4. **Retire & Replace** — Drone lands, is removed from the fleet, and a new drone with the next callsign (Alpha → Bravo → ... → Zulu → Alpha) launches after charging
 
@@ -640,6 +693,7 @@ The Edge AI analysis uses a two-layer approach for reliability:
 
 1. **Rule Engine** (instant) — Deterministic analysis of fleet telemetry generates structured insights: signal degradation warnings, battery alerts, coverage gap detection, and network quality assessments
 2. **Phi-4 Summary** (async) — The Edge AI model generates a one-sentence natural-language fleet health summary that overlays the rule-engine insights
+3. **Interactive AI Chat** — Users can ask questions via the `💬 AI Chat` panel; the `/api/chat` endpoint sends the user's question along with real-time fleet telemetry context to Phi-4 for contextual answers. If the model is offline, it falls back to the latest rule-engine analysis.
 
 Insights are emitted immediately via WebSocket with a 15-second polling fallback at `/api/ai-insights`.
 
@@ -718,13 +772,15 @@ The demo uses **Foundry Local Inference Operator** (Private Preview) to run Phi-
 |---|---|
 | Operator version | `0.0.1-prp.5` |
 | Chart | `inference-operator-0.0.1-prp.5.tgz` (bundled) |
-| Namespace (operator) | `foundry-local-operator` |
-| Namespace (workloads) | `foundry-local` |
+| Namespace (operator) | `mobile-foundry-op` (mobile cluster) |
+| Namespace (workloads) | `mobile-foundry-mdl` (mobile cluster) |
 | Model catalog alias | `phi-4-mini` |
-| Model variant | `Phi-4-mini-instruct` |
-| GPU | NVIDIA A2 (Ampere, 16 GB VRAM) |
-| Service | `phi-4-deployment.foundry-local.svc:5000` (ClusterIP) |
-| Auth | API key via `api-key` header |
+| Model runtime ID | `Phi-4-mini-instruct-cuda-gpu:5` |
+| GPU | NVIDIA GPU on edge node |
+| Service | `phi-4-deployment.<foundry-mdl-namespace>.svc:5000` (ClusterIP, port 5000 → targetPort 8443 via nginx TLS sidecar) |
+| Auth | API key via `api-key` header (auto-generated, stored in `phi-4-deployment-api-keys` secret) |
+
+> **Important:** The catalog model name is `phi-4-mini` (not `Phi-4-mini-instruct`). Using the wrong name returns "Model not found in catalog." The runtime model ID used in API calls is `Phi-4-mini-instruct-cuda-gpu:5`.
 
 **Dependencies:** cert-manager v1.19.2, trust-manager v0.20.3 (with `--secret-targets-enabled`).
 
@@ -804,8 +860,8 @@ Primary configuration file. All resource names are auto-derived from `PREFIX`. K
 | `DEMO_MODE` | Use synthetic data (no IoT Hub) | `true` |
 | `DATA_MODE` | Telemetry source: `demo`, `cloud` (IoT Hub), or `edge` (AIO MQTT) | `cloud` |
 | `EDGE_AI_ENABLED` | Enable Foundry Local AI insights | `true` |
-| `EDGE_AI_ENDPOINT` | Foundry Local API URL | `https://localhost:8443` (via `kubectl port-forward`) |
-| `EDGE_AI_MODEL` | Model name for inference | `Phi-4-mini-instruct` |
+| `EDGE_AI_ENDPOINT` | Foundry Local API URL | `https://phi-4-deployment.<foundry-mdl-namespace>.svc:5000` (in-cluster) or `https://localhost:8443` (via port-forward) |
+| `EDGE_AI_MODEL` | Model runtime ID for inference | `Phi-4-mini-instruct-cuda-gpu:5` |
 | `EDGE_AI_API_KEY` | API key for Foundry Local | Retrieve from K8s secret — see [How to get EDGE_AI_API_KEY](#how-to-get-edge_ai_endpoint-and-edge_ai_api_key) |
 | `EDGE_AI_INTERVAL` | Seconds between AI analysis cycles | `15` |
 | `DRONE_COUNT` | Number of drones in demo mode | `5` |
@@ -838,7 +894,7 @@ The cluster includes a full observability stack deployed in the `monitoring` nam
 
 A DNS A record for `grafana.adaptivecloudlab.com` must point to `172.21.229.201` (same MetalLB VIP as the demo dashboard).
 
-### Custom Dashboard: "AKS Arc Edge Cluster - MWC 2026"
+### Custom Dashboard: "AKS Arc Edge Cluster"
 
 Pre-provisioned via ConfigMap sidecar (`grafana-sc-dashboard` label). The dashboard auto-loads on Grafana startup with no manual import required.
 
@@ -889,11 +945,15 @@ Prometheus ──scrape──> node-exporter (all 6 nodes)
 | `kubectl` auth errors on Arc cluster | Use `az connectedk8s proxy --name <cluster> --resource-group <rg>` (no `--token` flag) |
 | Foundry Helm stuck in `pending-install` | Uninstall with `helm uninstall`, then install from local `.tgz` file |
 | trust-manager `SecretTargetsDisabled` | Apply the RBAC + deployment patch in [trust-manager patch](#trust-manager-patch-required) |
-| Model catalog alias not found | Use `phi-4-mini` (not `phi-4-mini-instruct`) |
+| Model catalog alias not found | Use `phi-4-mini` (not `phi-4-mini-instruct`). The runtime ID is `Phi-4-mini-instruct-cuda-gpu:5` |
+| Foundry model pod stuck in `Init:0/1` | Copy the CA bundle secret from the operator namespace to the model namespace (see [Step 3](#step-3-deploy-foundry-local-ai-model)) |
+| AI Chat returns "Failed to reach Edge AI" | Verify `EDGE_AI_ENDPOINT` and `EDGE_AI_API_KEY` are set, the model pod is `2/2 Ready`, and the service is reachable. Check dashboard logs for connection errors |
 | AI insights missing | Check that `simple-websocket` is installed (required for WebSocket transport); the dashboard also has a 15-second polling fallback at `/api/ai-insights` |
 | Dashboard shows no data | Check `DEMO_MODE=true` in `.env` and that the port-forward is running |
+| Cell tower map shows 404 | Ensure the dashboard container was rebuilt with `cell_towers.html` in `templates/` — the `/cell-towers` route serves the self-hosted map |
 | Edge mode shows no data | Verify `DATA_MODE=edge` and that the AIO MQTT broker is reachable at `MQTT_BROKER_HOST:MQTT_BROKER_PORT`; check dashboard logs for `[MQTT] Connection failed` |
 | AIO Dataflow not exporting to IoT Hub | Confirm managed identity has `IoT Hub Data Contributor` role on the hub; check AIO Dataflow status with `kubectl get dataflow -n azure-iot-operations` |
+| ACR build uses wrong image name | Dashboard image is `drone-demo/dashboard:latest` (not `drone-demo/video-dashboard:latest`). Always verify the image in `k8s/drone-demo.yaml` |
 
 ---
 
@@ -927,4 +987,4 @@ The NGINX Ingress controller service (`pdx-ingress` namespace) receives this IP 
 
 ## License
 
-Internal Microsoft demo — Adaptive Cloud Lab, MWC 2026.
+Internal Microsoft demo — Adaptive Cloud Lab.
