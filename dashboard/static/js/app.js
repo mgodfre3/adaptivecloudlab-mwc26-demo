@@ -7,8 +7,9 @@
   "use strict";
 
   // ── Constants ──────────────────────────────────────────────────────────
-  const BCN = [41.3574, 2.1286];   // Barcelona — Fira Gran Via / MWC
-  const ZOOM = 14;
+  const _mapCfg = window.DEMO_MAP_CONFIG || {};
+  const MAP_CENTER = _mapCfg.center || [39.7484, -104.9951];  // Denver, CO default
+  const ZOOM = _mapCfg.zoom || 13;
   const TRAIL_LEN = 120;           // max trail points per drone
   const CARD_PULSE_MS = 600;       // card highlight flash duration
 
@@ -31,7 +32,7 @@
 
   // ── Leaflet setup ─────────────────────────────────────────────────────
   const map = L.map("map", {
-    center: BCN,
+    center: MAP_CENTER,
     zoom: ZOOM,
     zoomControl: false,
     attributionControl: false,
