@@ -374,4 +374,41 @@
   fetchAiInsights();
   setInterval(fetchAiInsights, 15000);
 
+  // ── Cell Tower Overlay ───────────────────────────────────────────────
+  const towerBtn     = document.getElementById("tower-btn");
+  const towerOverlay = document.getElementById("tower-overlay");
+  const towerClose   = document.getElementById("tower-close");
+  const towerIframe  = document.getElementById("tower-iframe");
+  const towerLoading = document.getElementById("tower-loading");
+  let towerLoaded    = false;
+
+  function openTowerOverlay() {
+    towerOverlay.classList.remove("hidden");
+    towerOverlay.setAttribute("aria-hidden", "false");
+    towerBtn.classList.add("active");
+    // Lazy-load the iframe on first open
+    if (!towerLoaded) {
+      towerLoaded = true;
+      towerLoading.classList.remove("hidden");
+      towerIframe.src = towerIframe.dataset.src;
+      towerIframe.addEventListener("load", () => {
+        towerLoading.classList.add("hidden");
+      }, { once: true });
+      towerIframe.addEventListener("error", () => {
+        towerLoading.querySelector("span").textContent = "Failed to load cell tower data.";
+      }, { once: true });
+    }
+  }
+
+  function closeTowerOverlay() {
+    towerOverlay.classList.add("hidden");
+    towerOverlay.setAttribute("aria-hidden", "true");
+    towerBtn.classList.remove("active");
+  }
+
+  towerBtn.addEventListener("click", () => {
+    towerOverlay.classList.contains("hidden") ? openTowerOverlay() : closeTowerOverlay();
+  });
+  towerClose.addEventListener("click", closeTowerOverlay);
+
 })();
