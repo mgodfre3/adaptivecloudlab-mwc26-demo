@@ -37,6 +37,7 @@ $env:AZURE_EXTENSION_DIR = "$env:USERPROFILE\.azure\cliext-vi"
 # ── Locate & parse env file ──────────────────────────────────────────────────
 if (-not $EnvFile) {
     $candidates = @(
+        (Join-Path $root "config\vi-portland.env"),
         (Join-Path $root "config\vi-mobile.env")
     )
     foreach ($c in $candidates) {
@@ -44,7 +45,7 @@ if (-not $EnvFile) {
     }
 }
 if (-not $EnvFile -or -not (Test-Path $EnvFile)) {
-    Write-Host "ERROR: Cannot find env file. Ensure config/vi-mobile.env exists." -ForegroundColor Red
+    Write-Host "ERROR: Cannot find env file. Ensure config/vi-portland.env or config/vi-mobile.env exists." -ForegroundColor Red
     exit 1
 }
 

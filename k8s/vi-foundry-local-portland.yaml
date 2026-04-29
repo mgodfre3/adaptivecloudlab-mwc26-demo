@@ -1,0 +1,62 @@
+# =============================================================================
+# Foundry Local - Edge AI Inference for Video Indexer Cluster (Portland Stamp)
+# =============================================================================
+# Deploys Phi-4 Mini via Foundry Local Inference Operator CRDs.
+# Uses vi- prefix namespace to match the Video Indexer cluster naming convention.
+# This is the backup/second deployment — Portland is the failover for the
+# Mobile stamp (which is in transit to the conference).
+# =============================================================================
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vi-foundry-local
+  labels:
+    app: edge-ai
+    demo: mwc26
+    cluster: vi-portland
+
+---
+# =============================================================================
+# Model: Phi-4 Mini Instruct (from Foundry Local catalog)
+# =============================================================================
+apiVersion: foundrylocal.azure.com/v1
+kind: Model
+metadata:
+  name: phi-4-mini
+  namespace: vi-foundry-local
+spec:
+  displayName: "Phi-4 Mini Instruct"
+  description: "Microsoft Phi-4 Mini - compact 14B parameter SLM for edge AI inference"
+  publisher: "Microsoft"
+  source:
+    type: catalog
+    catalog:
+      alias: "phi-4-mini"
+
+---
+# =============================================================================
+# ModelDeployment: GPU-accelerated generative inference endpoint
+# =============================================================================
+apiVersion: foundrylocal.azure.com/v1
+kind: ModelDeployment
+metadata:
+  name: phi-4-deployment
+  namespace: vi-foundry-local
+spec:
+  displayName: "Phi-4 Edge AI Deployment (VI Portland Cluster)"
+  model:
+    ref: phi-4-mini
+  workloadType: generative
+  compute: gpu
+  replicas: 1
+  resources:
+    requests:
+      cpu: 500m
+      memory: "2Gi"
+    limits:
+      cpu: "2"
+      memory: "3Gi"
+      gpu: 1
+  authentication:
+    enabled: true
