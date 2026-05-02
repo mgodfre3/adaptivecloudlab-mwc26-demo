@@ -155,7 +155,7 @@ def api_chat():
 
     headers = {"Content-Type": "application/json"}
     if EDGE_AI_API_KEY:
-        headers["api-key"] = EDGE_AI_API_KEY
+        headers["Authorization"] = f"Bearer {EDGE_AI_API_KEY}"
 
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
@@ -606,7 +606,7 @@ def _call_edge_ai(prompt: str) -> str | None:
 
     headers = {"Content-Type": "application/json"}
     if EDGE_AI_API_KEY:
-        headers["api-key"] = EDGE_AI_API_KEY
+        headers["Authorization"] = f"Bearer {EDGE_AI_API_KEY}"
 
     # Foundry Local uses self-signed TLS — skip verification for cluster-internal calls
     ctx = ssl.create_default_context()
