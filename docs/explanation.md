@@ -1,6 +1,6 @@
 # Deep Dive: Infrastructure, Data Flow, and Edge AI Insights
 
-**MWC 2026 Demo — Adaptive Cloud Lab**
+**Denver 2026 Demo — Adaptive Cloud Lab**
 
 This document provides a thorough examination of how the Real-Time Drone Network Monitoring demo works, including the infrastructure, the complete data flow, how AI Insights runs locally on-premises, and what data is collected and where it goes.
 
@@ -153,7 +153,7 @@ launching → patrolling ⇄ hovering → returning → landing → charging →
 | State | Description |
 |---|---|
 | `launching` | Climbing from base pad to patrol altitude (8 ticks / ~24 s) |
-| `patrolling` | Flying between Barcelona waypoints at 8–18 m/s |
+| `patrolling` | Flying between Denver waypoints at 8–18 m/s |
 | `hovering` | Brief pause at a waypoint (3–8 ticks / 9–24 s) |
 | `returning` | Battery ≤ 18% — flying home at max speed |
 | `landing` | Descending at base (6 ticks / ~18 s) |

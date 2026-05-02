@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    Drone Network Monitor – Frontend Logic
-   MWC 2026 • Leaflet map + Socket.IO real-time updates
+   Denver 2026 • Leaflet map + Socket.IO real-time updates
    ═══════════════════════════════════════════════════════════════════════════ */
 
 (function () {

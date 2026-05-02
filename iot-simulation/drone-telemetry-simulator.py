@@ -1,5 +1,5 @@
 """
-Drone Telemetry Simulator for MWC 2026 Demo
+Drone Telemetry Simulator for Denver 2026 Demo
 =============================================
 Simulates N drones flying waypoint-based patrol routes around a configurable
 location, each sending 5G network-monitoring telemetry to Azure IoT Hub.
@@ -65,8 +65,8 @@ SEND_INTERVAL = float(os.getenv("SEND_INTERVAL_SECONDS", "5"))
 
 # Map / location config — override per demo environment via .env
 MAP_LOCATION_NAME = os.getenv("MAP_LOCATION_NAME", "Denver, CO")
-BCN_CENTER_LAT = float(os.getenv("MAP_CENTER_LAT", "39.7484"))
-BCN_CENTER_LON = float(os.getenv("MAP_CENTER_LON", "-104.9951"))
+DEN_CENTER_LAT = float(os.getenv("MAP_CENTER_LAT", "39.7484"))
+DEN_CENTER_LON = float(os.getenv("MAP_CENTER_LON", "-104.9951"))
 
 # Base / home pad
 BASE_LAT, BASE_LON = (
@@ -270,7 +270,7 @@ class Drone:
     # ── Telemetry generation ─────────────────────────────────────────────────
 
     def build_telemetry(self) -> dict:
-        """Build a telemetry payload with MWC-relevant 5G network metrics."""
+        """Build a telemetry payload with 5G network metrics."""
         self.step()
 
         return {
@@ -400,7 +400,7 @@ def _run_edge_mode():
 
 def main():
     print("=" * 60)
-    print("  Drone Telemetry Simulator — MWC 2026 Demo")
+    print("  Drone Telemetry Simulator — Denver 2026 Demo")
     print(f"  Drones: {DRONE_COUNT}   Interval: {SEND_INTERVAL}s   Return at: {BATTERY_RETURN}% battery")
     print(f"  Mode  : {DATA_MODE}")
     print("=" * 60)

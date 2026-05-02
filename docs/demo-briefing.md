@@ -1,6 +1,6 @@
 # 8-Minute Demo Briefing: Real-Time Drone Network Monitoring with Edge AI
 
-**MWC 2026 — Adaptive Cloud Lab**
+**Denver 2026 — Adaptive Cloud Lab**
 
 > **Headline:** *"Real-time edge AI powering live drone network monitoring — all running on two physical servers, zero cloud compute."*
 
@@ -63,7 +63,7 @@ Physical Servers (Azure Local HCI)
 
 ### Drone Fleet Behavior
 
-**5 simulated drones** patrol 12 Barcelona landmarks (Sagrada Família, Camp Nou, Port Olímpic, Park Güell, and more). Each drone follows an autonomous lifecycle:
+**5 simulated drones** patrol 12 Denver landmarks (Union Station, Coors Field, Convention Center, City Park, and more). Each drone follows an autonomous lifecycle:
 
 1. **Launches** from base station (41.3545°N, 2.1279°E) with a NATO callsign
 2. **Patrols** waypoints at 8–18 m/s, reporting 5G telemetry every 3 seconds
@@ -94,7 +94,7 @@ The dashboard auto-falls back to demo mode if no Event Hub connection string is 
 
 ### Dashboard UI
 
-- **Leaflet map** — Dark tile layer centered on Barcelona with live drone markers, flight trails, and color-coded signal indicators (green/yellow/red)
+- **Leaflet map** — Dark tile layer centered on Denver with live drone markers, flight trails, and color-coded signal indicators (green/yellow/red)
 - **Telemetry cards** — Per-drone metrics updated in real time via WebSocket (Socket.IO)
 - **Status badges** — PATROLLING (green), RETURNING (yellow), LAUNCHING (blue), CHARGING (cyan), LANDING (orange), EMERGENCY (red)
 - **Fleet aggregates** — Bottom bar: average RSRP, DL throughput, latency, active drone count, messages/sec
@@ -290,7 +290,7 @@ The AIO Dataflow (`k8s/iot-ops-dataflow.yaml`) transforms data before export:
 | **Grafana** | Dashboard visualization at `https://grafana.adaptivecloudlab.com` |
 | **DCGM Exporter** | NVIDIA GPU metrics (runs on GPU node only) |
 
-### Custom Dashboard: "AKS Arc Edge Cluster — MWC 2026"
+### Custom Dashboard: "AKS Arc Edge Cluster — Denver 2026"
 
 | Section | Key Metrics |
 |---|---|
@@ -333,7 +333,7 @@ The AIO Dataflow (`k8s/iot-ops-dataflow.yaml`) transforms data before export:
 
 | Time | Show | Say |
 |---|---|---|
-| **0–2 min** | Dashboard map + architecture | *"5 autonomous drones patrolling Barcelona on a real K8s cluster running on two servers in this room."* |
+| **0–2 min** | Dashboard map + architecture | *"5 autonomous drones patrolling Denver on a real K8s cluster running on two servers in this room."* |
 | **2–4 min** | Telemetry cards + fleet stats | *"Real-time 5G metrics — signal strength, throughput, latency. Drones return to base at low battery and are replaced."* |
 | **4–6 min** | AI insights panel + Grafana GPU | *"Phi-4 Mini on the NVIDIA A2 GPU analyzes the fleet every 15 seconds. Watch the GPU utilization spike."* |
 | **6–8 min** | Dataflow YAML + architecture diagram | *"Raw data stays on-prem. Only anonymized metrics reach Azure. This is edge AI done right."* |

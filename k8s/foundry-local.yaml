@@ -1,6 +1,6 @@
 # =============================================================================
 # Foundry Local - Edge AI Inference on AKS Arc (Azure Local)
-# MWC 2026 Demo: Real-Time Drone Network Monitoring with Edge AI
+# Denver 2026 Demo: Real-Time Drone Network Monitoring with Edge AI
 # =============================================================================
 # Deploys Phi-4 Mini via Foundry Local Inference Operator CRDs.
 # The operator (installed via Helm) manages the Model and ModelDeployment
