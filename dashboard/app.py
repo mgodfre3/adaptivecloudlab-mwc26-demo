@@ -16,6 +16,12 @@ Env vars (set in dashboard/.env or inherit from iot-simulation/.env):
   EDGE_AI_MODEL               – Model name (default: Phi-4-mini-instruct)
   EDGE_AI_API_KEY             – Foundry Local API key
   EDGE_AI_ENABLED             – set to "true" to enable edge AI analysis
+  MAP_LOCATION_NAME           – display name for the demo city (default: Denver, CO)
+  MAP_CENTER_LAT              – map center latitude (default: 39.7484)
+  MAP_CENTER_LON              – map center longitude (default: -104.9951)
+  MAP_BASE_LAT                – drone home-pad latitude (default: 39.7437)
+  MAP_BASE_LON                – drone home-pad longitude (default: -104.9916)
+  MAP_ZOOM                    – initial Leaflet zoom level (default: 13)
 """
 
 import json
@@ -58,6 +64,14 @@ EDGE_AI_API_KEY = os.getenv("EDGE_AI_API_KEY", "")
 EDGE_AI_ENABLED = os.getenv("EDGE_AI_ENABLED", "false").lower() == "true"
 EDGE_AI_INTERVAL = int(os.getenv("EDGE_AI_INTERVAL", "15"))  # seconds between analyses
 
+# ── Map / location config (override per demo environment) ────────────────────
+MAP_LOCATION_NAME = os.getenv("MAP_LOCATION_NAME", "Denver, CO")
+MAP_CENTER_LAT = float(os.getenv("MAP_CENTER_LAT", "39.7484"))
+MAP_CENTER_LON = float(os.getenv("MAP_CENTER_LON", "-104.9951"))
+MAP_BASE_LAT = float(os.getenv("MAP_BASE_LAT", "39.7437"))
+MAP_BASE_LON = float(os.getenv("MAP_BASE_LON", "-104.9916"))
+MAP_ZOOM = int(os.getenv("MAP_ZOOM", "13"))
+
 # ── Flask app ────────────────────────────────────────────────────────────────
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.getenv("FLASK_SECRET_KEY", secrets.token_hex(16))
@@ -71,7 +85,13 @@ _shutdown = threading.Event()
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    map_config = {
+        "center_lat": MAP_CENTER_LAT,
+        "center_lon": MAP_CENTER_LON,
+        "zoom": MAP_ZOOM,
+        "location_name": MAP_LOCATION_NAME,
+    }
+    return render_template("index.html", map_config=map_config)
 
 
 @app.route("/api/state")
@@ -84,6 +104,79 @@ def api_state():
 def api_ai_insights():
     """Return latest AI analysis results."""
     return jsonify(ai_insights)
+
+
+@app.route("/api/chat", methods=["POST"])
+def api_chat():
+    """Interactive chat with the edge AI model about fleet status."""
+    body = request.get_json(silent=True) or {}
+    user_msg = (body.get("message") or "").strip()
+    if not user_msg:
+        return jsonify({"error": "Empty message"}), 400
+
+    # Build fleet context so the model knows current state
+    snapshot = _build_telemetry_snapshot()
+    context = snapshot if snapshot else "No drones currently active."
+
+    system_prompt = (
+        "You are the Edge AI assistant for a drone fleet monitoring dashboard. "
+        "You have access to real-time telemetry from the fleet. Answer user questions "
+        "concisely using the fleet data provided. If no fleet data is available, say so. "
+        "Keep answers under 3 sentences unless the user asks for detail."
+    )
+
+    import urllib.request, urllib.error, ssl
+
+    url = f"{EDGE_AI_ENDPOINT}/v1/chat/completions"
+    payload = json.dumps({
+        "model": EDGE_AI_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Current fleet telemetry:\n{context}\n\nUser question: {user_msg}"},
+        ],
+        "temperature": 0.4,
+        "max_tokens": 250,
+    }).encode()
+
+    headers = {"Content-Type": "application/json"}
+    if EDGE_AI_API_KEY:
+        headers["api-key"] = EDGE_AI_API_KEY
+
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+
+    req = urllib.request.Request(url, data=payload, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
+            result = json.loads(resp.read())
+            choices = result.get("choices", [])
+            if not choices:
+                return jsonify({"reply": "No response from model.", "model": EDGE_AI_MODEL})
+            content = choices[0].get("message", {}).get("content", "").strip()
+            return jsonify({"reply": content or "Empty response.", "model": EDGE_AI_MODEL})
+    except Exception as e:
+        print(f"[Chat] Error: {e}")
+        # Fallback: provide a rule-based answer using current insights
+        if ai_insights and ai_insights.get("summary"):
+            return jsonify({
+                "reply": f"(AI model unavailable — here's the latest analysis) {ai_insights['summary']}",
+                "model": f"{EDGE_AI_MODEL} (offline)"
+            })
+        return jsonify({
+            "reply": "Edge AI model is not reachable right now. Check that Foundry Local is running on the cluster.",
+            "model": f"{EDGE_AI_MODEL} (offline)"
+        })
+
+
+@app.route("/cell-towers")
+def cell_towers():
+    """Self-contained cell tower coverage map (loaded in iframe overlay)."""
+    return render_template("cell_towers.html",
+                           center_lat=MAP_CENTER_LAT,
+                           center_lon=MAP_CENTER_LON,
+                           zoom=MAP_ZOOM,
+                           location_name=MAP_LOCATION_NAME)
 
 
 @app.route("/api/reset", methods=["POST"])
@@ -163,11 +256,11 @@ def _start_eventhub_consumer():
 
 # ── Demo-mode synthetic data generator ───────────────────────────────────────
 
-# Barcelona, Spain — Fira Gran Via / MWC venue area
-BCN_LAT, BCN_LON = 41.3574, 2.1286
+# Demo center and base coordinates — read from env vars (see MAP_* config above)
+BCN_LAT, BCN_LON = MAP_CENTER_LAT, MAP_CENTER_LON
 
-# Base / home pad — MWC venue itself
-BASE_LAT, BASE_LON = 41.3545, 2.1279
+# Base / home pad
+BASE_LAT, BASE_LON = MAP_BASE_LAT, MAP_BASE_LON
 
 # Battery thresholds
 BATTERY_RETURN = 18        # % — start flying home
@@ -179,20 +272,20 @@ DRAIN_RATE_MAX = 0.065     # % per tick while flying
 LAUNCH_CLIMB_TICKS = 8     # ticks to reach patrol altitude after launch
 LANDING_TICKS = 6          # ticks to descend at base
 
-# Patrol waypoints — landmarks around Barcelona spread over ~8 km
+# Patrol waypoints — Denver, CO landmarks spread over ~8 km
 PATROL_WAYPOINTS = [
-    (41.3700, 2.1100),  # Montjuic hilltop
-    (41.3650, 2.1500),  # Eixample / Sagrada Familia area
-    (41.3870, 2.1200),  # Placa Catalunya
-    (41.3520, 2.1680),  # Port Olimpic
-    (41.3780, 2.1450),  # Gracia
-    (41.3460, 2.1350),  # Zona Franca industrial
-    (41.3620, 2.1050),  # Sants station
-    (41.3900, 2.1650),  # Diagonal Mar
-    (41.3740, 2.0980),  # Pedralbes
-    (41.3580, 2.1800),  # Poblenou
-    (41.3830, 2.1100),  # Les Corts / Camp Nou
-    (41.3480, 2.1500),  # Parallel / Poble Sec
+    (39.7560, -104.9942),  # Coors Field / LoDo
+    (39.7373, -104.9884),  # Civic Center Park
+    (39.7502, -104.9497),  # City Park
+    (39.6985, -104.9613),  # Washington Park
+    (39.7667, -104.9701),  # RiNo (River North)
+    (39.7651, -105.0153),  # Highlands
+    (39.7445, -105.0063),  # Auraria Campus
+    (39.7315, -104.9538),  # Cheesman Park
+    (39.7167, -104.9524),  # Cherry Creek
+    (39.7329, -104.9793),  # Capitol Hill
+    (39.7530, -105.0002),  # Union Station
+    (39.7665, -104.9773),  # Curtis Park
 ]
 
 # NATO phonetic alphabet for drone callsigns — cycles through these
@@ -416,7 +509,7 @@ def _start_demo_generator():
     _callsign_idx = 0  # reset on start
 
     print(f"[Demo] Running in DEMO MODE — managing fleet of {DRONE_COUNT} drones")
-    print(f"[Demo] Drones patrol Barcelona, return to base at {BATTERY_RETURN}% battery,")
+    print(f"[Demo] Drones patrol {MAP_LOCATION_NAME}, return to base at {BATTERY_RETURN}% battery,")
     print(f"[Demo] charge to {BATTERY_LAUNCH}%, then a replacement drone launches.")
 
     # Seed initial fleet with staggered batteries for visual variety

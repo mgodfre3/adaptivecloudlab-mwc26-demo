@@ -7,8 +7,9 @@
   "use strict";
 
   // ── Constants ──────────────────────────────────────────────────────────
-  const BCN = [41.3574, 2.1286];   // Barcelona — Fira Gran Via / MWC
-  const ZOOM = 14;
+  const _mapCfg = window.DEMO_MAP_CONFIG || {};
+  const MAP_CENTER = _mapCfg.center || [39.7484, -104.9951];  // Denver, CO default
+  const ZOOM = _mapCfg.zoom || 13;
   const TRAIL_LEN = 120;           // max trail points per drone
   const CARD_PULSE_MS = 600;       // card highlight flash duration
 
@@ -31,7 +32,7 @@
 
   // ── Leaflet setup ─────────────────────────────────────────────────────
   const map = L.map("map", {
-    center: BCN,
+    center: MAP_CENTER,
     zoom: ZOOM,
     zoomControl: false,
     attributionControl: false,
@@ -132,6 +133,7 @@
     Object.keys(drones).forEach(k => delete drones[k]);
     cardsEl.innerHTML = "";
     updateAggregates();
+    clearHeatmap();
   });
 
   // ── Main handler ──────────────────────────────────────────────────────
@@ -179,6 +181,9 @@
     if (drone.trail.length > TRAIL_LEN) drone.trail.shift();
     drone.trailLine.setLatLngs(drone.trail);
     drone.trailLine.setStyle({ color });
+
+    // Record signal sample for heatmap grid
+    recordHeatSample(lat, lng, rsrp);
 
     // Update card
     upsertCard(id, d);
@@ -374,65 +379,162 @@
   fetchAiInsights();
   setInterval(fetchAiInsights, 15000);
 
-  // ── Fleet Chat (Talk to Your Fleet) ───────────────────────────────────
-  const chatInput = document.getElementById("chat-input");
-  const chatBtn = document.getElementById("chat-btn");
-  const chatMessages = document.getElementById("chat-messages");
+  // ── Signal Heatmap Grid ─────────────────────────────────────────────
+  // Paints map grid cells with rolling-average RSRP as drones fly through.
+  const GRID_SIZE = 0.0018;          // ~200 m cell at Denver latitude
+  const heatCells = {};              // "latKey,lonKey" → { rect, samples: [rsrp…] }
+  const heatLayer = L.layerGroup();
+  let heatmapVisible = false;
+  const heatBtn = document.getElementById("heatmap-btn");
+  const MAX_SAMPLES = 20;            // rolling window per cell
 
-  if (chatInput && chatBtn && chatMessages) {
-    async function sendChatMessage() {
-      const msg = chatInput.value.trim();
-      if (!msg) return;
-
-      // Add user message
-      const userBubble = document.createElement("div");
-      userBubble.className = "chat-msg user";
-      userBubble.textContent = msg;
-      chatMessages.appendChild(userBubble);
-      chatInput.value = "";
-      chatMessages.scrollTop = chatMessages.scrollHeight;
-
-      // Show thinking indicator
-      const thinkBubble = document.createElement("div");
-      thinkBubble.className = "chat-msg ai thinking";
-      thinkBubble.innerHTML = '<span class="dot-pulse"></span> Thinking\u2026';
-      chatMessages.appendChild(thinkBubble);
-      chatMessages.scrollTop = chatMessages.scrollHeight;
-
-      try {
-        const resp = await fetch("/api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: msg }),
-        });
-        const data = await resp.json();
-        thinkBubble.remove();
-
-        const aiBubble = document.createElement("div");
-        aiBubble.className = "chat-msg ai";
-        aiBubble.textContent = data.response || "No response.";
-        if (data.model && data.model !== "fallback") {
-          const tag = document.createElement("span");
-          tag.className = "chat-model-tag";
-          tag.textContent = data.model;
-          aiBubble.appendChild(tag);
-        }
-        chatMessages.appendChild(aiBubble);
-      } catch (e) {
-        thinkBubble.remove();
-        const errBubble = document.createElement("div");
-        errBubble.className = "chat-msg ai";
-        errBubble.textContent = "\u26a0\ufe0f Failed to reach AI. Try again.";
-        chatMessages.appendChild(errBubble);
-      }
-      chatMessages.scrollTop = chatMessages.scrollHeight;
-    }
-
-    chatBtn.addEventListener("click", sendChatMessage);
-    chatInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") sendChatMessage();
-    });
+  function gridKey(lat, lon) {
+    const gLat = Math.floor(lat / GRID_SIZE) * GRID_SIZE;
+    const gLon = Math.floor(lon / GRID_SIZE) * GRID_SIZE;
+    return `${gLat.toFixed(5)},${gLon.toFixed(5)}`;
   }
+
+  function heatColor(rsrp) {
+    if (rsrp >= -80)  return { fill: "#22c55e", opacity: 0.30 };   // good – green
+    if (rsrp >= -100) return { fill: "#f59e0b", opacity: 0.28 };   // ok   – amber
+    return { fill: "#ef4444", opacity: 0.32 };                     // poor – red
+  }
+
+  function recordHeatSample(lat, lon, rsrp) {
+    if (!heatmapVisible || rsrp <= -900) return;          // skip if hidden or no data
+    const key = gridKey(lat, lon);
+    if (!heatCells[key]) {
+      const gLat = Math.floor(lat / GRID_SIZE) * GRID_SIZE;
+      const gLon = Math.floor(lon / GRID_SIZE) * GRID_SIZE;
+      const bounds = [[gLat, gLon], [gLat + GRID_SIZE, gLon + GRID_SIZE]];
+      const { fill, opacity } = heatColor(rsrp);
+      const rect = L.rectangle(bounds, {
+        color: fill, fillColor: fill, fillOpacity: opacity,
+        weight: 0.5, opacity: 0.25, interactive: false,
+      });
+      heatLayer.addLayer(rect);
+      heatCells[key] = { rect, samples: [rsrp] };
+    } else {
+      const cell = heatCells[key];
+      cell.samples.push(rsrp);
+      if (cell.samples.length > MAX_SAMPLES) cell.samples.shift();
+      const avg = cell.samples.reduce((a, b) => a + b, 0) / cell.samples.length;
+      const { fill, opacity } = heatColor(avg);
+      cell.rect.setStyle({ color: fill, fillColor: fill, fillOpacity: opacity });
+    }
+  }
+
+  function clearHeatmap() {
+    heatLayer.clearLayers();
+    Object.keys(heatCells).forEach(k => delete heatCells[k]);
+  }
+
+  heatBtn.addEventListener("click", () => {
+    heatmapVisible = !heatmapVisible;
+    if (heatmapVisible) {
+      heatLayer.addTo(map);
+      heatBtn.classList.add("active");
+    } else {
+      map.removeLayer(heatLayer);
+      heatBtn.classList.remove("active");
+    }
+  });
+
+  // ── Cell Tower Overlay ───────────────────────────────────────────────
+  const towerBtn     = document.getElementById("tower-btn");
+  const towerOverlay = document.getElementById("tower-overlay");
+  const towerClose   = document.getElementById("tower-close");
+  const towerIframe  = document.getElementById("tower-iframe");
+  const towerLoading = document.getElementById("tower-loading");
+  let towerLoaded    = false;
+
+  function openTowerOverlay() {
+    towerOverlay.classList.remove("hidden");
+    towerOverlay.setAttribute("aria-hidden", "false");
+    towerBtn.classList.add("active");
+    // Lazy-load the iframe on first open
+    if (!towerLoaded) {
+      towerLoaded = true;
+      towerLoading.classList.remove("hidden");
+      towerIframe.src = towerIframe.dataset.src;
+      towerIframe.addEventListener("load", () => {
+        towerLoading.classList.add("hidden");
+      }, { once: true });
+      towerIframe.addEventListener("error", () => {
+        towerLoading.querySelector("span").textContent = "Failed to load cell tower data.";
+      }, { once: true });
+    }
+  }
+
+  function closeTowerOverlay() {
+    towerOverlay.classList.add("hidden");
+    towerOverlay.setAttribute("aria-hidden", "true");
+    towerBtn.classList.remove("active");
+  }
+
+  towerBtn.addEventListener("click", () => {
+    towerOverlay.classList.contains("hidden") ? openTowerOverlay() : closeTowerOverlay();
+  });
+  towerClose.addEventListener("click", closeTowerOverlay);
+
+  // ── AI Chat Panel ──────────────────────────────────────────────────
+  const chatBtn      = document.getElementById("chat-btn");
+  const chatPanel    = document.getElementById("chat-panel");
+  const chatClose    = document.getElementById("chat-close");
+  const chatForm     = document.getElementById("chat-form");
+  const chatInput    = document.getElementById("chat-input");
+  const chatMessages = document.getElementById("chat-messages");
+  const chatModelTag = document.getElementById("chat-model-tag");
+
+  function toggleChat() {
+    const hidden = chatPanel.classList.toggle("hidden");
+    chatBtn.classList.toggle("active", !hidden);
+    if (!hidden) chatInput.focus();
+  }
+
+  chatBtn.addEventListener("click", toggleChat);
+  chatClose.addEventListener("click", toggleChat);
+
+  function appendChatMsg(text, role) {
+    const div = document.createElement("div");
+    div.className = "chat-msg chat-msg-" + role;
+    div.innerHTML = `<div class="chat-msg-content">${escapeHtml(text)}</div>`;
+    chatMessages.appendChild(div);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+    return div;
+  }
+
+  function escapeHtml(str) {
+    const d = document.createElement("div");
+    d.textContent = str;
+    return d.innerHTML;
+  }
+
+  chatForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const msg = chatInput.value.trim();
+    if (!msg) return;
+    chatInput.value = "";
+    appendChatMsg(msg, "user");
+
+    // Show typing indicator
+    const typing = appendChatMsg("Thinking…", "ai typing");
+
+    try {
+      const resp = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: msg }),
+      });
+      const data = await resp.json();
+      typing.remove();
+      appendChatMsg(data.reply || data.response || "No response.", "ai");
+      if (data.model && chatModelTag) chatModelTag.textContent = data.model;
+    } catch (err) {
+      typing.remove();
+      appendChatMsg("Failed to reach Edge AI. Is the model running?", "ai error");
+    }
+  });
 
   // ── GPU Metrics ───────────────────────────────────────────────────────
   async function fetchGpuMetrics() {
