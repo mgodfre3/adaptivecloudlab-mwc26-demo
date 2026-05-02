@@ -155,7 +155,7 @@ def api_chat():
 
     headers = {"Content-Type": "application/json"}
     if EDGE_AI_API_KEY:
-        headers["api-key"] = EDGE_AI_API_KEY
+        headers["Authorization"] = f"Bearer {EDGE_AI_API_KEY}"
 
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
@@ -267,7 +267,7 @@ def _start_eventhub_consumer():
 # ── Demo-mode synthetic data generator ───────────────────────────────────────
 
 # Demo center and base coordinates — read from env vars (see MAP_* config above)
-BCN_LAT, BCN_LON = MAP_CENTER_LAT, MAP_CENTER_LON
+DEN_LAT, DEN_LON = MAP_CENTER_LAT, MAP_CENTER_LON
 
 # Base / home pad
 BASE_LAT, BASE_LON = MAP_BASE_LAT, MAP_BASE_LON
@@ -606,7 +606,7 @@ def _call_edge_ai(prompt: str) -> str | None:
 
     headers = {"Content-Type": "application/json"}
     if EDGE_AI_API_KEY:
-        headers["api-key"] = EDGE_AI_API_KEY
+        headers["Authorization"] = f"Bearer {EDGE_AI_API_KEY}"
 
     # Foundry Local uses self-signed TLS — skip verification for cluster-internal calls
     ctx = ssl.create_default_context()
@@ -821,7 +821,7 @@ if __name__ == "__main__":
         mode = "EVENT HUB"
     ai_mode = "EDGE AI" if EDGE_AI_ENABLED else "DEMO RULES"
     print(f"{'='*60}")
-    print(f"  Drone Network Monitoring Dashboard — MWC 2026")
+    print(f"  Drone Network Monitoring Dashboard — Denver 2026")
     print(f"  Telemetry : {mode}   Port: {PORT}   Drones: {DRONE_COUNT}")
     print(f"  Edge AI   : {ai_mode} → {EDGE_AI_ENDPOINT} ({EDGE_AI_MODEL})")
     print(f"{'='*60}")

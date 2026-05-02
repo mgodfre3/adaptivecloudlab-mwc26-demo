@@ -112,8 +112,8 @@
     <!-- Right panel – per-drone cards + AI insights -->
     <aside id="panel">
       <!-- AI Insights Section -->
-      <div id="ai-section">
-        <div id="ai-header">
+      <div id="ai-section" class="panel-section">
+        <div id="ai-header" class="panel-section-header" data-toggle="ai-section-body">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5">
             <path d="M12 2a4 4 0 0 1 4 4v2a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4z"/>
             <path d="M8 14s-4 2-4 6h16c0-4-4-6-4-6"/>
@@ -121,35 +121,48 @@
           </svg>
           <span>Edge AI Analysis</span>
           <span id="ai-model" class="ai-model-tag">—</span>
+          <span class="panel-toggle">▾</span>
         </div>
-        <div id="ai-summary"></div>
-        <div id="ai-insights-list"></div>
+        <div id="ai-section-body" class="panel-section-body">
+          <div id="ai-summary"></div>
+          <div id="ai-insights-list"></div>
+        </div>
       </div>
 
-      <h2>Fleet Status</h2>
-      <div id="drone-cards"></div>
+      <div class="panel-section">
+        <div class="panel-section-header" data-toggle="fleet-body">
+          <span>Fleet Status</span>
+          <span class="panel-toggle">▾</span>
+        </div>
+        <div id="fleet-body" class="panel-section-body">
+          <div id="drone-cards"></div>
+        </div>
+      </div>
 
       <!-- Fleet Chat -->
-      <div id="chat-section">
-        <div id="chat-header">
+      <div id="chat-section" class="panel-section">
+        <div id="chat-header" class="panel-section-header" data-toggle="chat-section-body">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5">
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
           </svg>
           <span>Talk to Your Fleet</span>
           <span class="ai-model-tag" style="font-size:9px;">Phi-4 Mini</span>
+          <span class="panel-toggle">▾</span>
         </div>
-        <div id="chat-messages">
-          <div class="chat-msg ai">Ask me anything about your drone fleet. Try: "Which drone has the lowest battery?" or "Summarize fleet health."</div>
-        </div>
-        <div id="chat-input-row">
-          <input type="text" id="chat-input" placeholder="Ask about your fleet…" autocomplete="off">
-          <button id="chat-btn" title="Send">→</button>
+        <div id="chat-section-body" class="panel-section-body">
+          <div id="sidebar-chat-messages">
+            <div class="chat-msg ai">Ask me anything about your drone fleet. Try: "Which drone has the lowest battery?" or "Summarize fleet health."</div>
+          </div>
+          <div id="chat-input-row">
+            <input type="text" id="sidebar-chat-input" placeholder="Ask about your fleet…" autocomplete="off">
+            <button id="sidebar-chat-send" title="Send">→</button>
+          </div>
         </div>
       </div>
 
       <!-- GPU Metrics -->
-      <div id="gpu-section">
-        <div id="gpu-header">
+      <div id="gpu-section" class="panel-section">
+        <div id="gpu-header" class="panel-section-header" data-toggle="gpu-section-body">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5">
             <rect x="4" y="4" width="16" height="16" rx="2"/>
             <path d="M9 9h6v6H9z"/>
@@ -157,28 +170,31 @@
           </svg>
           <span>GPU Metrics</span>
           <span class="ai-model-tag" style="font-size:9px;">NVIDIA Edge</span>
+          <span class="panel-toggle">▾</span>
         </div>
-        <div id="gpu-metrics-grid">
-          <div class="gpu-metric">
-            <span class="gpu-metric-label">Utilization</span>
-            <span class="gpu-metric-value" id="gpu-util">—</span>
-            <div class="gpu-bar"><div class="gpu-bar-fill" id="gpu-util-fill"></div></div>
+        <div id="gpu-section-body" class="panel-section-body">
+          <div id="gpu-metrics-grid">
+            <div class="gpu-metric">
+              <span class="gpu-metric-label">Utilization</span>
+              <span class="gpu-metric-value" id="gpu-util">—</span>
+              <div class="gpu-bar"><div class="gpu-bar-fill" id="gpu-util-fill"></div></div>
+            </div>
+            <div class="gpu-metric">
+              <span class="gpu-metric-label">Memory</span>
+              <span class="gpu-metric-value" id="gpu-mem">—</span>
+              <div class="gpu-bar"><div class="gpu-bar-fill" id="gpu-mem-fill" style="background:#f59e0b;"></div></div>
+            </div>
+            <div class="gpu-metric">
+              <span class="gpu-metric-label">Temp</span>
+              <span class="gpu-metric-value" id="gpu-temp">—</span>
+            </div>
+            <div class="gpu-metric">
+              <span class="gpu-metric-label">Power</span>
+              <span class="gpu-metric-value" id="gpu-power">—</span>
+            </div>
           </div>
-          <div class="gpu-metric">
-            <span class="gpu-metric-label">Memory</span>
-            <span class="gpu-metric-value" id="gpu-mem">—</span>
-            <div class="gpu-bar"><div class="gpu-bar-fill" id="gpu-mem-fill" style="background:#f59e0b;"></div></div>
-          </div>
-          <div class="gpu-metric">
-            <span class="gpu-metric-label">Temp</span>
-            <span class="gpu-metric-value" id="gpu-temp">—</span>
-          </div>
-          <div class="gpu-metric">
-            <span class="gpu-metric-label">Power</span>
-            <span class="gpu-metric-value" id="gpu-power">—</span>
-          </div>
+          <div id="gpu-status-text" style="font-size:9px;color:#666;margin-top:4px;">Connecting…</div>
         </div>
-        <div id="gpu-status-text" style="font-size:9px;color:#666;margin-top:4px;">Connecting…</div>
       </div>
     </aside>
   </main>

@@ -22,7 +22,7 @@ graph TB
         subgraph UserPool["User Node Pool (pdxuser)"]
             subgraph DroneDemoNS["Namespace: drone-demo"]
                 Dashboard["🌐 Dashboard<br/>Flask + Socket.IO + Leaflet.js<br/><i>Real-time kiosk UI</i>"]
-                Simulator["📡 Drone Simulator<br/>Python<br/><i>5 drones × Barcelona area</i>"]
+                Simulator["📡 Drone Simulator<br/>Python<br/><i>5 drones × Denver area</i>"]
             end
         end
 
