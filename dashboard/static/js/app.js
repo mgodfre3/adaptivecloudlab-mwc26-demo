@@ -536,4 +536,42 @@
     }
   });
 
+  // ── GPU Metrics ───────────────────────────────────────────────────────
+  async function fetchGpuMetrics() {
+    try {
+      const resp = await fetch("/api/gpu-metrics");
+      const data = await resp.json();
+      const gpuUtil = document.getElementById("gpu-util");
+      const gpuMem = document.getElementById("gpu-mem");
+      const gpuTemp = document.getElementById("gpu-temp");
+      const gpuPower = document.getElementById("gpu-power");
+      const gpuStatus = document.getElementById("gpu-status-text");
+
+      if (!gpuUtil) return;
+
+      if (data.status === "healthy") {
+        gpuUtil.textContent = `${data.gpu_utilization || 0}%`;
+        const utilBar = document.getElementById("gpu-util-fill");
+        if (utilBar) utilBar.style.width = `${data.gpu_utilization || 0}%`;
+
+        const memPct = data.memory_percent || 0;
+        const memUsed = data.memory_used_mb || 0;
+        const memTotal = data.memory_total_mb || 0;
+        gpuMem.textContent = memTotal > 0
+          ? `${(memUsed/1024).toFixed(1)}/${(memTotal/1024).toFixed(1)} GB`
+          : `${memPct}%`;
+        const memBar = document.getElementById("gpu-mem-fill");
+        if (memBar) memBar.style.width = `${memPct}%`;
+
+        gpuTemp.textContent = `${data.temperature_c || 0}\u00b0C`;
+        gpuPower.textContent = `${(data.power_watts || 0).toFixed(0)}W`;
+        if (gpuStatus) gpuStatus.textContent = "DCGM connected";
+      } else {
+        if (gpuStatus) gpuStatus.textContent = "GPU metrics unavailable";
+      }
+    } catch (e) { /* ignore */ }
+  }
+  fetchGpuMetrics();
+  setInterval(fetchGpuMetrics, 3000);
+
 })();

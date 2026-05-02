@@ -510,3 +510,106 @@ main {
   main { flex-direction: column; }
   #panel { width: 100%; min-width: 100%; max-height: 40vh; border-left: none; border-top: 1px solid var(--border); }
 }
+
+/* ── Fleet Chat ──────────────────────────────────────────────────── */
+#chat-section {
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+#chat-header {
+  display: flex; align-items: center; gap: 6px;
+  color: var(--accent); font-size: 13px; font-weight: 600;
+  margin-bottom: 8px; padding: 0 4px;
+}
+#chat-header svg { color: var(--accent); }
+#chat-messages {
+  max-height: 180px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 8px; margin-bottom: 8px;
+  background: var(--bg); border-radius: 8px;
+  font-size: 12px;
+}
+.chat-msg {
+  padding: 6px 10px; border-radius: 8px;
+  max-width: 90%; line-height: 1.4; word-wrap: break-word;
+}
+.chat-msg.user {
+  align-self: flex-end;
+  background: var(--accent); color: #000;
+  border-bottom-right-radius: 2px;
+}
+.chat-msg.ai {
+  align-self: flex-start;
+  background: var(--bg-card); color: var(--text);
+  border-bottom-left-radius: 2px;
+  border: 1px solid var(--border);
+}
+.chat-msg.thinking { color: var(--text-dim); font-style: italic; }
+.chat-model-tag {
+  display: inline-block; font-size: 9px;
+  background: rgba(56,189,248,0.15); color: var(--accent);
+  padding: 1px 5px; border-radius: 3px; margin-left: 6px;
+}
+#chat-input-row {
+  display: flex; gap: 6px;
+}
+#chat-input {
+  flex: 1; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 10px; color: var(--text);
+  font-size: 12px; outline: none;
+}
+#chat-input:focus { border-color: var(--accent); }
+#chat-btn {
+  background: var(--accent); color: #000; border: none;
+  border-radius: 6px; padding: 6px 12px; cursor: pointer;
+  font-weight: 600; font-size: 14px;
+}
+#chat-btn:hover { opacity: 0.85; }
+
+.dot-pulse {
+  display: inline-block; width: 6px; height: 6px;
+  border-radius: 50%; background: var(--accent);
+  animation: dot-pulse-anim 1s ease-in-out infinite;
+}
+@keyframes dot-pulse-anim {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+/* ── GPU Metrics ─────────────────────────────────────────────────── */
+#gpu-section {
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+#gpu-header {
+  display: flex; align-items: center; gap: 6px;
+  color: var(--green); font-size: 13px; font-weight: 600;
+  margin-bottom: 8px; padding: 0 4px;
+}
+#gpu-header svg { color: var(--green); }
+#gpu-metrics-grid {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.gpu-metric {
+  background: var(--bg); border-radius: 6px;
+  padding: 6px 8px;
+}
+.gpu-metric-label {
+  display: block; font-size: 9px; color: var(--text-dim);
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.gpu-metric-value {
+  display: block; font-size: 16px; font-weight: 700;
+  color: var(--text); font-family: 'Inter', sans-serif;
+}
+.gpu-bar {
+  height: 3px; background: var(--bg-card);
+  border-radius: 2px; margin-top: 3px; overflow: hidden;
+}
+.gpu-bar-fill {
+  height: 100%; width: 0%; background: var(--green);
+  transition: width 0.5s; border-radius: 2px;
+}
