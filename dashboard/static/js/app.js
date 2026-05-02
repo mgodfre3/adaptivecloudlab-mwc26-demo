@@ -374,4 +374,102 @@
   fetchAiInsights();
   setInterval(fetchAiInsights, 15000);
 
+  // ── Fleet Chat (Talk to Your Fleet) ───────────────────────────────────
+  const chatInput = document.getElementById("chat-input");
+  const chatBtn = document.getElementById("chat-btn");
+  const chatMessages = document.getElementById("chat-messages");
+
+  if (chatInput && chatBtn && chatMessages) {
+    async function sendChatMessage() {
+      const msg = chatInput.value.trim();
+      if (!msg) return;
+
+      // Add user message
+      const userBubble = document.createElement("div");
+      userBubble.className = "chat-msg user";
+      userBubble.textContent = msg;
+      chatMessages.appendChild(userBubble);
+      chatInput.value = "";
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+
+      // Show thinking indicator
+      const thinkBubble = document.createElement("div");
+      thinkBubble.className = "chat-msg ai thinking";
+      thinkBubble.innerHTML = '<span class="dot-pulse"></span> Thinking\u2026';
+      chatMessages.appendChild(thinkBubble);
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+
+      try {
+        const resp = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: msg }),
+        });
+        const data = await resp.json();
+        thinkBubble.remove();
+
+        const aiBubble = document.createElement("div");
+        aiBubble.className = "chat-msg ai";
+        aiBubble.textContent = data.response || "No response.";
+        if (data.model && data.model !== "fallback") {
+          const tag = document.createElement("span");
+          tag.className = "chat-model-tag";
+          tag.textContent = data.model;
+          aiBubble.appendChild(tag);
+        }
+        chatMessages.appendChild(aiBubble);
+      } catch (e) {
+        thinkBubble.remove();
+        const errBubble = document.createElement("div");
+        errBubble.className = "chat-msg ai";
+        errBubble.textContent = "\u26a0\ufe0f Failed to reach AI. Try again.";
+        chatMessages.appendChild(errBubble);
+      }
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    chatBtn.addEventListener("click", sendChatMessage);
+    chatInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") sendChatMessage();
+    });
+  }
+
+  // ── GPU Metrics ───────────────────────────────────────────────────────
+  async function fetchGpuMetrics() {
+    try {
+      const resp = await fetch("/api/gpu-metrics");
+      const data = await resp.json();
+      const gpuUtil = document.getElementById("gpu-util");
+      const gpuMem = document.getElementById("gpu-mem");
+      const gpuTemp = document.getElementById("gpu-temp");
+      const gpuPower = document.getElementById("gpu-power");
+      const gpuStatus = document.getElementById("gpu-status-text");
+
+      if (!gpuUtil) return;
+
+      if (data.status === "healthy") {
+        gpuUtil.textContent = `${data.gpu_utilization || 0}%`;
+        const utilBar = document.getElementById("gpu-util-fill");
+        if (utilBar) utilBar.style.width = `${data.gpu_utilization || 0}%`;
+
+        const memPct = data.memory_percent || 0;
+        const memUsed = data.memory_used_mb || 0;
+        const memTotal = data.memory_total_mb || 0;
+        gpuMem.textContent = memTotal > 0
+          ? `${(memUsed/1024).toFixed(1)}/${(memTotal/1024).toFixed(1)} GB`
+          : `${memPct}%`;
+        const memBar = document.getElementById("gpu-mem-fill");
+        if (memBar) memBar.style.width = `${memPct}%`;
+
+        gpuTemp.textContent = `${data.temperature_c || 0}\u00b0C`;
+        gpuPower.textContent = `${(data.power_watts || 0).toFixed(0)}W`;
+        if (gpuStatus) gpuStatus.textContent = "DCGM connected";
+      } else {
+        if (gpuStatus) gpuStatus.textContent = "GPU metrics unavailable";
+      }
+    } catch (e) { /* ignore */ }
+  }
+  fetchGpuMetrics();
+  setInterval(fetchGpuMetrics, 3000);
+
 })();

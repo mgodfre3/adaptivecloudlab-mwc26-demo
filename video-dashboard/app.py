@@ -44,6 +44,8 @@ from flask_socketio import SocketIO
 
 from vi_client import VideoIndexerClient
 import cv_inference
+from live_stream import LiveStreamProcessor
+from gpu_metrics import fetch_gpu_metrics
 
 # ── Load config ──────────────────────────────────────────────────────────────
 _here = Path(__file__).resolve().parent
@@ -70,6 +72,9 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 # ── Video Indexer client ─────────────────────────────────────────────────────
 vi_client = VideoIndexerClient()
+
+# ── Live stream processor ────────────────────────────────────────────────────
+live_processor = LiveStreamProcessor(CV_MODEL_PATH, CV_CONFIDENCE)
 
 # ── In-memory video store ────────────────────────────────────────────────────
 # video_id -> { id, filename, status, uploaded_at, detections, summary, ... }
@@ -1307,6 +1312,80 @@ def _complete_analysis(video_id: str, vi_insights: dict | None):
         "step": "ai_summary", "status": "complete",
     })
     app.logger.info("[%s] Analysis complete (recovered)", video_id)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  Live Stream API
+# ═════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/live/start", methods=["POST"])
+def live_start():
+    """Start live video stream with real-time detection overlay."""
+    body = request.get_json(silent=True) or {}
+    video_id = body.get("video_id")
+
+    # Find a video to stream
+    video_path = None
+    if video_id:
+        with videos_lock:
+            vid = videos.get(video_id)
+        if vid and vid.get("file_path"):
+            video_path = vid["file_path"]
+    else:
+        # Use the most recent uploaded video
+        with videos_lock:
+            for v in reversed(list(videos.values())):
+                if v.get("file_path") and v.get("status") == "complete":
+                    video_path = v["file_path"]
+                    video_id = v["id"]
+                    break
+
+    # Fallback: use any MP4 in the uploads directory
+    if not video_path:
+        mp4s = list(UPLOAD_DIR.glob("*.mp4"))
+        if mp4s:
+            video_path = str(mp4s[0])
+            video_id = "live"
+
+    if not video_path:
+        return jsonify({"error": "No video available for live stream. Upload a drone video first."}), 400
+
+    if live_processor.is_running:
+        live_processor.stop()
+
+    ok = live_processor.start(video_path, socketio)
+    if ok:
+        return jsonify({"status": "started", "video_id": video_id})
+    return jsonify({"error": "Failed to start live stream"}), 500
+
+
+@app.route("/api/live/stop", methods=["POST"])
+def live_stop():
+    """Stop the live video stream."""
+    live_processor.stop()
+    return jsonify({"status": "stopped"})
+
+
+@app.route("/api/live/status")
+def live_status():
+    """Get live stream status and metrics."""
+    return jsonify({
+        "running": live_processor.is_running,
+        "fps": round(live_processor.fps, 1),
+        "frame_count": live_processor.frame_count,
+        "detection_count": live_processor.detection_count,
+        "avg_inference_ms": round(live_processor.avg_inference_ms, 1),
+    })
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  GPU Metrics API
+# ═════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/gpu-metrics")
+def gpu_metrics_api():
+    """Return real-time GPU metrics from DCGM exporter."""
+    return jsonify(fetch_gpu_metrics())
 
 
 if __name__ == "__main__":
