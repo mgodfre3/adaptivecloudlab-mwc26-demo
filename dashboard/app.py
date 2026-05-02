@@ -106,6 +106,17 @@ def api_ai_insights():
     return jsonify(ai_insights)
 
 
+_CHAT_SYSTEM_PROMPT = (
+    "You are an expert drone fleet operations analyst at a 5G network monitoring "
+    "command center. You have access to real-time telemetry data from the drone fleet "
+    "shown below. Answer the operator's question concisely and factually based only "
+    "on the data provided. Use professional language. If asked about trends, note "
+    "that you only see the current snapshot.\n\n"
+    "Drone Fleet Status:\n{fleet_data}\n\n"
+    "Recent AI Insights:\n{ai_summary}\n"
+)
+
+
 @app.route("/api/chat", methods=["POST"])
 def api_chat():
     """Interactive chat with the edge AI model about fleet status."""
@@ -115,14 +126,18 @@ def api_chat():
         return jsonify({"error": "Empty message"}), 400
 
     # Build fleet context so the model knows current state
-    snapshot = _build_telemetry_snapshot()
-    context = snapshot if snapshot else "No drones currently active."
+    fleet_data = _build_telemetry_snapshot() or "No drones currently active."
+    ai_summary_text = ai_insights.get("summary", "No analysis available yet.")
+    insights_text = "\n".join(
+        f"- [{i.get('severity', 'info')}] {i.get('title', '')}: {i.get('detail', '')}"
+        for i in ai_insights.get("insights", [])
+    )
+    if insights_text:
+        ai_summary_text += "\n" + insights_text
 
-    system_prompt = (
-        "You are the Edge AI assistant for a drone fleet monitoring dashboard. "
-        "You have access to real-time telemetry from the fleet. Answer user questions "
-        "concisely using the fleet data provided. If no fleet data is available, say so. "
-        "Keep answers under 3 sentences unless the user asks for detail."
+    system_prompt = _CHAT_SYSTEM_PROMPT.format(
+        fleet_data=fleet_data,
+        ai_summary=ai_summary_text,
     )
 
     import urllib.request, urllib.error, ssl
@@ -132,10 +147,10 @@ def api_chat():
         "model": EDGE_AI_MODEL,
         "messages": [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Current fleet telemetry:\n{context}\n\nUser question: {user_msg}"},
+            {"role": "user", "content": user_msg},
         ],
         "temperature": 0.4,
-        "max_tokens": 250,
+        "max_tokens": 300,
     }).encode()
 
     headers = {"Content-Type": "application/json"}
@@ -148,7 +163,7 @@ def api_chat():
 
     req = urllib.request.Request(url, data=payload, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
+        with urllib.request.urlopen(req, timeout=45, context=ctx) as resp:
             result = json.loads(resp.read())
             choices = result.get("choices", [])
             if not choices:
@@ -158,14 +173,9 @@ def api_chat():
     except Exception as e:
         print(f"[Chat] Error: {e}")
         # Fallback: provide a rule-based answer using current insights
-        if ai_insights and ai_insights.get("summary"):
-            return jsonify({
-                "reply": f"(AI model unavailable — here's the latest analysis) {ai_insights['summary']}",
-                "model": f"{EDGE_AI_MODEL} (offline)"
-            })
         return jsonify({
-            "reply": "Edge AI model is not reachable right now. Check that Foundry Local is running on the cluster.",
-            "model": f"{EDGE_AI_MODEL} (offline)"
+            "reply": f"AI is currently unavailable. Fleet summary: {ai_summary_text}",
+            "model": f"{EDGE_AI_MODEL} (offline)",
         })
 
 
@@ -792,84 +802,6 @@ def handle_connect():
         socketio.emit("telemetry", payload)
     if ai_insights.get("insights"):
         socketio.emit("ai_insights", ai_insights)
-
-
-# ── Fleet Chat (Talk to Your Fleet) ─────────────────────────────────────────
-
-_CHAT_SYSTEM_PROMPT = (
-    "You are an expert drone fleet operations analyst at a 5G network monitoring "
-    "command center. You have access to real-time telemetry data from the drone fleet "
-    "shown below. Answer the operator's question concisely and factually based only "
-    "on the data provided. Use professional language. If asked about trends, note "
-    "that you only see the current snapshot.\n\n"
-    "Drone Fleet Status:\n{fleet_data}\n\n"
-    "Recent AI Insights:\n{ai_summary}\n"
-)
-
-
-@app.route("/api/chat", methods=["POST"])
-def fleet_chat():
-    """Answer natural-language questions about the drone fleet using Phi-4."""
-    body = request.get_json(silent=True) or {}
-    user_msg = body.get("message", "").strip()
-    if not user_msg:
-        return jsonify({"error": "No message provided"}), 400
-
-    # Build context from current fleet state
-    fleet_data = _build_telemetry_snapshot()
-    if not fleet_data:
-        fleet_data = "No drones currently active."
-
-    ai_summary_text = ai_insights.get("summary", "No analysis available yet.")
-    insights_text = "\n".join(
-        f"- [{i.get('severity', 'info')}] {i.get('title', '')}: {i.get('detail', '')}"
-        for i in ai_insights.get("insights", [])
-    )
-    if insights_text:
-        ai_summary_text += "\n" + insights_text
-
-    system_prompt = _CHAT_SYSTEM_PROMPT.format(
-        fleet_data=fleet_data,
-        ai_summary=ai_summary_text,
-    )
-
-    # Call Foundry Local
-    import urllib.request
-    import urllib.error
-    import ssl
-
-    url = f"{EDGE_AI_ENDPOINT}/v1/chat/completions"
-    payload = json.dumps({
-        "model": EDGE_AI_MODEL,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_msg},
-        ],
-        "temperature": 0.4,
-        "max_tokens": 300,
-    }).encode()
-
-    headers = {"Content-Type": "application/json"}
-    if EDGE_AI_API_KEY:
-        headers["api-key"] = EDGE_AI_API_KEY
-
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-
-    req = urllib.request.Request(url, data=payload, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=45, context=ctx) as resp:
-            result = json.loads(resp.read())
-            content = result["choices"][0]["message"]["content"].strip()
-            return jsonify({"response": content, "model": EDGE_AI_MODEL})
-    except Exception as e:
-        print(f"[Chat] Error: {e}")
-        return jsonify({
-            "response": f"AI is currently unavailable. Fleet summary: {ai_summary_text}",
-            "model": "fallback",
-        })
-
 
 # ── GPU Metrics ──────────────────────────────────────────────────────────────
 

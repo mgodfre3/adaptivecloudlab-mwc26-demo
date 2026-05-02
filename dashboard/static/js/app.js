@@ -528,7 +528,7 @@
       });
       const data = await resp.json();
       typing.remove();
-      appendChatMsg(data.reply || data.response || "No response.", "ai");
+      appendChatMsg(data.reply || "No response.", "ai");
       if (data.model && chatModelTag) chatModelTag.textContent = data.model;
     } catch (err) {
       typing.remove();
