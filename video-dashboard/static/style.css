@@ -118,13 +118,38 @@ a:hover { text-decoration: underline; }
   padding: 14px 18px;
   border-bottom: 1px solid var(--border);
   background: rgba(255,255,255,0.02);
+  cursor: pointer;
+  user-select: none;
 }
+.card.no-collapse .card-header { cursor: default; }
+.card-header:hover { background: rgba(255,255,255,0.05); }
+.card.no-collapse .card-header:hover { background: rgba(255,255,255,0.02); }
+.card-header .collapse-arrow {
+  font-size: 10px;
+  color: var(--text-dim);
+  transition: transform 0.3s;
+  margin-left: 8px;
+  flex-shrink: 0;
+}
+.card.collapsed .collapse-arrow { transform: rotate(-90deg); }
+.card.collapsed .card-body {
+  max-height: 0 !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  overflow: hidden;
+  border: none;
+}
+.card.collapsed .card-header { border-bottom-color: transparent; }
 .card-header h2 {
   font-size: 14px; font-weight: 600;
   display: flex; align-items: center; gap: 8px;
 }
 .card-header h2 .icon { font-size: 16px; }
-.card-body { padding: 18px; overflow-y: auto; }
+.card-body {
+  padding: 18px; overflow-y: auto;
+  max-height: 2000px;
+  transition: max-height 0.3s ease, padding 0.2s ease;
+}
 
 /* ── Left column: video panel ─────────────────────────────────────── */
 #left-col {
