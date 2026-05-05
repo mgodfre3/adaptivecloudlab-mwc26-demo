@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Deploy IoT Hub and register simulated drone devices for the MWC demo.
+    Deploy IoT Hub and register simulated drone devices for the Denver demo.
 
 .DESCRIPTION
     1. Deploys an Azure IoT Hub via Bicep (iot-simulation/iot-hub-deployment.bicep)

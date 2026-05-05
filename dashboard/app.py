@@ -64,6 +64,12 @@ EDGE_AI_API_KEY = os.getenv("EDGE_AI_API_KEY", "")
 EDGE_AI_ENABLED = os.getenv("EDGE_AI_ENABLED", "false").lower() == "true"
 EDGE_AI_INTERVAL = int(os.getenv("EDGE_AI_INTERVAL", "15"))  # seconds between analyses
 
+# Power BI embedded analytics (optional — office view)
+POWERBI_EMBED_ENABLED = os.getenv("POWERBI_EMBED_ENABLED", "false").lower() == "true"
+POWERBI_REPORT_URL = os.getenv("POWERBI_REPORT_URL", "")
+POWERBI_WORKSPACE_ID = os.getenv("POWERBI_WORKSPACE_ID", "")
+POWERBI_REPORT_ID = os.getenv("POWERBI_REPORT_ID", "")
+
 # ── Map / location config (override per demo environment) ────────────────────
 MAP_LOCATION_NAME = os.getenv("MAP_LOCATION_NAME", "Denver, CO")
 MAP_CENTER_LAT = float(os.getenv("MAP_CENTER_LAT", "39.7484"))
@@ -106,6 +112,17 @@ def api_ai_insights():
     return jsonify(ai_insights)
 
 
+_CHAT_SYSTEM_PROMPT = (
+    "You are an expert drone fleet operations analyst at a 5G network monitoring "
+    "command center. You have access to real-time telemetry data from the drone fleet "
+    "shown below. Answer the operator's question concisely and factually based only "
+    "on the data provided. Use professional language. If asked about trends, note "
+    "that you only see the current snapshot.\n\n"
+    "Drone Fleet Status:\n{fleet_data}\n\n"
+    "Recent AI Insights:\n{ai_summary}\n"
+)
+
+
 @app.route("/api/chat", methods=["POST"])
 def api_chat():
     """Interactive chat with the edge AI model about fleet status."""
@@ -115,14 +132,18 @@ def api_chat():
         return jsonify({"error": "Empty message"}), 400
 
     # Build fleet context so the model knows current state
-    snapshot = _build_telemetry_snapshot()
-    context = snapshot if snapshot else "No drones currently active."
+    fleet_data = _build_telemetry_snapshot() or "No drones currently active."
+    ai_summary_text = ai_insights.get("summary", "No analysis available yet.")
+    insights_text = "\n".join(
+        f"- [{i.get('severity', 'info')}] {i.get('title', '')}: {i.get('detail', '')}"
+        for i in ai_insights.get("insights", [])
+    )
+    if insights_text:
+        ai_summary_text += "\n" + insights_text
 
-    system_prompt = (
-        "You are the Edge AI assistant for a drone fleet monitoring dashboard. "
-        "You have access to real-time telemetry from the fleet. Answer user questions "
-        "concisely using the fleet data provided. If no fleet data is available, say so. "
-        "Keep answers under 3 sentences unless the user asks for detail."
+    system_prompt = _CHAT_SYSTEM_PROMPT.format(
+        fleet_data=fleet_data,
+        ai_summary=ai_summary_text,
     )
 
     import urllib.request, urllib.error, ssl
@@ -132,15 +153,15 @@ def api_chat():
         "model": EDGE_AI_MODEL,
         "messages": [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Current fleet telemetry:\n{context}\n\nUser question: {user_msg}"},
+            {"role": "user", "content": user_msg},
         ],
         "temperature": 0.4,
-        "max_tokens": 250,
+        "max_tokens": 300,
     }).encode()
 
     headers = {"Content-Type": "application/json"}
     if EDGE_AI_API_KEY:
-        headers["api-key"] = EDGE_AI_API_KEY
+        headers["Authorization"] = f"Bearer {EDGE_AI_API_KEY}"
 
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
@@ -148,7 +169,7 @@ def api_chat():
 
     req = urllib.request.Request(url, data=payload, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
+        with urllib.request.urlopen(req, timeout=45, context=ctx) as resp:
             result = json.loads(resp.read())
             choices = result.get("choices", [])
             if not choices:
@@ -158,14 +179,9 @@ def api_chat():
     except Exception as e:
         print(f"[Chat] Error: {e}")
         # Fallback: provide a rule-based answer using current insights
-        if ai_insights and ai_insights.get("summary"):
-            return jsonify({
-                "reply": f"(AI model unavailable — here's the latest analysis) {ai_insights['summary']}",
-                "model": f"{EDGE_AI_MODEL} (offline)"
-            })
         return jsonify({
-            "reply": "Edge AI model is not reachable right now. Check that Foundry Local is running on the cluster.",
-            "model": f"{EDGE_AI_MODEL} (offline)"
+            "reply": f"AI is currently unavailable. Fleet summary: {ai_summary_text}",
+            "model": f"{EDGE_AI_MODEL} (offline)",
         })
 
 
@@ -177,6 +193,19 @@ def cell_towers():
                            center_lon=MAP_CENTER_LON,
                            zoom=MAP_ZOOM,
                            location_name=MAP_LOCATION_NAME)
+
+
+@app.route("/analytics")
+def analytics():
+    """Office view: embedded Power BI report showing fleet-wide aggregated analytics."""
+    return render_template(
+        "analytics.html",
+        powerbi_enabled=POWERBI_EMBED_ENABLED,
+        powerbi_report_url=POWERBI_REPORT_URL,
+        powerbi_workspace_id=POWERBI_WORKSPACE_ID,
+        powerbi_report_id=POWERBI_REPORT_ID,
+        location_name=MAP_LOCATION_NAME,
+    )
 
 
 @app.route("/api/reset", methods=["POST"])
@@ -257,7 +286,7 @@ def _start_eventhub_consumer():
 # ── Demo-mode synthetic data generator ───────────────────────────────────────
 
 # Demo center and base coordinates — read from env vars (see MAP_* config above)
-BCN_LAT, BCN_LON = MAP_CENTER_LAT, MAP_CENTER_LON
+DEN_LAT, DEN_LON = MAP_CENTER_LAT, MAP_CENTER_LON
 
 # Base / home pad
 BASE_LAT, BASE_LON = MAP_BASE_LAT, MAP_BASE_LON
@@ -596,7 +625,7 @@ def _call_edge_ai(prompt: str) -> str | None:
 
     headers = {"Content-Type": "application/json"}
     if EDGE_AI_API_KEY:
-        headers["api-key"] = EDGE_AI_API_KEY
+        headers["Authorization"] = f"Bearer {EDGE_AI_API_KEY}"
 
     # Foundry Local uses self-signed TLS — skip verification for cluster-internal calls
     ctx = ssl.create_default_context()
@@ -793,6 +822,14 @@ def handle_connect():
     if ai_insights.get("insights"):
         socketio.emit("ai_insights", ai_insights)
 
+# ── GPU Metrics ──────────────────────────────────────────────────────────────
+
+@app.route("/api/gpu-metrics")
+def gpu_metrics_api():
+    """Return real-time GPU metrics from DCGM exporter."""
+    from gpu_metrics import fetch_gpu_metrics
+    return jsonify(fetch_gpu_metrics())
+
 
 if __name__ == "__main__":
     if DATA_MODE == "edge":
@@ -803,7 +840,7 @@ if __name__ == "__main__":
         mode = "EVENT HUB"
     ai_mode = "EDGE AI" if EDGE_AI_ENABLED else "DEMO RULES"
     print(f"{'='*60}")
-    print(f"  Drone Network Monitoring Dashboard — MWC 2026")
+    print(f"  Drone Network Monitoring Dashboard — Denver 2026")
     print(f"  Telemetry : {mode}   Port: {PORT}   Drones: {DRONE_COUNT}")
     print(f"  Edge AI   : {ai_mode} → {EDGE_AI_ENDPOINT} ({EDGE_AI_MODEL})")
     print(f"{'='*60}")

@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    Drone Network Monitor – Frontend Logic
-   MWC 2026 • Leaflet map + Socket.IO real-time updates
+   Denver 2026 • Leaflet map + Socket.IO real-time updates
    ═══════════════════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -46,6 +46,55 @@
 
   // Zoom control bottom-left
   L.control.zoom({ position: "bottomleft" }).addTo(map);
+
+  // ── Cell Tower Markers on Main Map ─────────────────────────────────────
+  const TOWERS = [
+    { lat: 39.7392, lon: -104.9903, name: "Downtown – 16th St", tech: "5G/LTE", provider: "T-Mobile", height: 45 },
+    { lat: 39.7487, lon: -105.0003, name: "Union Station", tech: "5G", provider: "Verizon", height: 38 },
+    { lat: 39.7555, lon: -104.9881, name: "RiNo / Brighton", tech: "5G/LTE", provider: "AT&T", height: 42 },
+    { lat: 39.7312, lon: -104.9874, name: "Baker / S Broadway", tech: "LTE", provider: "T-Mobile", height: 35 },
+    { lat: 39.7502, lon: -104.9994, name: "Coors Field", tech: "5G", provider: "Verizon", height: 50 },
+    { lat: 39.7437, lon: -104.9870, name: "Capitol Hill", tech: "5G/LTE", provider: "AT&T", height: 40 },
+    { lat: 39.7620, lon: -104.9819, name: "City Park West", tech: "LTE", provider: "T-Mobile", height: 32 },
+    { lat: 39.7351, lon: -105.0093, name: "Lincoln Park", tech: "5G", provider: "Verizon", height: 44 },
+    { lat: 39.7585, lon: -105.0078, name: "Highland / LoHi", tech: "5G/LTE", provider: "T-Mobile", height: 36 },
+    { lat: 39.7275, lon: -104.9725, name: "Washington Park", tech: "LTE", provider: "AT&T", height: 30 },
+    { lat: 39.7680, lon: -104.9730, name: "Botanic Gardens", tech: "5G", provider: "Verizon", height: 41 },
+    { lat: 39.7460, lon: -105.0165, name: "Sun Valley", tech: "LTE", provider: "T-Mobile", height: 33 },
+    { lat: 39.7536, lon: -104.9710, name: "East Colfax", tech: "5G/LTE", provider: "AT&T", height: 39 },
+    { lat: 39.7700, lon: -104.9930, name: "Sunnyside", tech: "LTE", provider: "T-Mobile", height: 34 },
+    { lat: 39.7215, lon: -104.9950, name: "Overland / Evans", tech: "5G", provider: "Verizon", height: 43 },
+    { lat: 39.7395, lon: -104.9700, name: "Cheesman Park S", tech: "5G/LTE", provider: "AT&T", height: 37 },
+    { lat: 39.7580, lon: -104.9550, name: "Montclair", tech: "LTE", provider: "T-Mobile", height: 31 },
+    { lat: 39.7330, lon: -105.0200, name: "Barnum", tech: "LTE", provider: "AT&T", height: 29 },
+    { lat: 39.7750, lon: -105.0050, name: "Berkeley", tech: "5G", provider: "Verizon", height: 46 },
+    { lat: 39.7155, lon: -104.9810, name: "University / DU", tech: "5G/LTE", provider: "T-Mobile", height: 38 },
+  ];
+
+  function towerColor(tech) {
+    if (tech.includes("5G") && tech.includes("LTE")) return "#9b59b6";
+    if (tech.includes("5G")) return "#e74c3c";
+    return "#3498db";
+  }
+
+  const towerLayerGroup = L.layerGroup().addTo(map);
+  TOWERS.forEach(t => {
+    const c = towerColor(t.tech);
+    // Coverage radius circle
+    L.circle([t.lat, t.lon], {
+      radius: t.tech.includes("5G") ? 600 : 900,
+      color: c, weight: 1, opacity: 0.25,
+      fillColor: c, fillOpacity: 0.06,
+      dashArray: "4 4", interactive: false,
+    }).addTo(towerLayerGroup);
+    // Tower marker
+    L.circleMarker([t.lat, t.lon], {
+      radius: 5, color: c, weight: 2,
+      fillColor: c, fillOpacity: 0.8,
+    }).addTo(towerLayerGroup).bindPopup(
+      `<b>📡 ${t.name}</b><br>${t.tech} · ${t.provider}<br>Height: ${t.height}m`
+    );
+  });
 
   // ── Per-drone state ───────────────────────────────────────────────────
   const drones = {};   // { droneId: { marker, trail, trailLine, data } }
@@ -535,5 +584,93 @@
       appendChatMsg("Failed to reach Edge AI. Is the model running?", "ai error");
     }
   });
+
+  // ── Collapsible Sidebar Panels ──────────────────────────────────────
+  document.querySelectorAll(".panel-section-header[data-toggle]").forEach(hdr => {
+    hdr.style.cursor = "pointer";
+    hdr.addEventListener("click", () => {
+      const bodyId = hdr.getAttribute("data-toggle");
+      const body = document.getElementById(bodyId);
+      if (!body) return;
+      const collapsed = body.classList.toggle("collapsed");
+      const arrow = hdr.querySelector(".panel-toggle");
+      if (arrow) arrow.textContent = collapsed ? "▸" : "▾";
+    });
+  });
+
+  // ── Sidebar Chat (inline in right panel) ──────────────────────────────
+  const sidebarChatSend  = document.getElementById("sidebar-chat-send");
+  const sidebarChatInput = document.getElementById("sidebar-chat-input");
+  const sidebarChatMsgs  = document.getElementById("sidebar-chat-messages");
+  if (sidebarChatSend && sidebarChatInput && sidebarChatMsgs) {
+    async function sendSidebarChat() {
+      const msg = sidebarChatInput.value.trim();
+      if (!msg) return;
+      sidebarChatInput.value = "";
+      const userDiv = document.createElement("div");
+      userDiv.className = "chat-msg user";
+      userDiv.textContent = msg;
+      sidebarChatMsgs.appendChild(userDiv);
+      const typingDiv = document.createElement("div");
+      typingDiv.className = "chat-msg ai";
+      typingDiv.textContent = "Thinking…";
+      sidebarChatMsgs.appendChild(typingDiv);
+      sidebarChatMsgs.scrollTop = sidebarChatMsgs.scrollHeight;
+      try {
+        const resp = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: msg }),
+        });
+        const data = await resp.json();
+        typingDiv.textContent = data.response || data.reply || "No response.";
+      } catch (e) {
+        typingDiv.textContent = "Failed to reach Edge AI.";
+      }
+      sidebarChatMsgs.scrollTop = sidebarChatMsgs.scrollHeight;
+    }
+    sidebarChatSend.addEventListener("click", sendSidebarChat);
+    sidebarChatInput.addEventListener("keydown", e => {
+      if (e.key === "Enter") { e.preventDefault(); sendSidebarChat(); }
+    });
+  }
+
+  // ── GPU Metrics ───────────────────────────────────────────────────────
+  async function fetchGpuMetrics() {
+    try {
+      const resp = await fetch("/api/gpu-metrics");
+      const data = await resp.json();
+      const gpuUtil = document.getElementById("gpu-util");
+      const gpuMem = document.getElementById("gpu-mem");
+      const gpuTemp = document.getElementById("gpu-temp");
+      const gpuPower = document.getElementById("gpu-power");
+      const gpuStatus = document.getElementById("gpu-status-text");
+
+      if (!gpuUtil) return;
+
+      if (data.status === "healthy") {
+        gpuUtil.textContent = `${data.gpu_utilization || 0}%`;
+        const utilBar = document.getElementById("gpu-util-fill");
+        if (utilBar) utilBar.style.width = `${data.gpu_utilization || 0}%`;
+
+        const memPct = data.memory_percent || 0;
+        const memUsed = data.memory_used_mb || 0;
+        const memTotal = data.memory_total_mb || 0;
+        gpuMem.textContent = memTotal > 0
+          ? `${(memUsed/1024).toFixed(1)}/${(memTotal/1024).toFixed(1)} GB`
+          : `${memPct}%`;
+        const memBar = document.getElementById("gpu-mem-fill");
+        if (memBar) memBar.style.width = `${memPct}%`;
+
+        gpuTemp.textContent = `${data.temperature_c || 0}\u00b0C`;
+        gpuPower.textContent = `${(data.power_watts || 0).toFixed(0)}W`;
+        if (gpuStatus) gpuStatus.textContent = "DCGM connected";
+      } else {
+        if (gpuStatus) gpuStatus.textContent = "GPU metrics unavailable";
+      }
+    } catch (e) { /* ignore */ }
+  }
+  fetchGpuMetrics();
+  setInterval(fetchGpuMetrics, 3000);
 
 })();

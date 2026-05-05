@@ -35,7 +35,7 @@
 
   <!-- ── Left Column: Video + Pipeline ── -->
   <div id="left-col">
-    <div class="card" id="video-card">
+    <div class="card no-collapse" id="video-card">
       <div class="card-header">
         <h2><span class="icon">🎥</span> Video Player</h2>
         <span id="video-name" style="font-size:12px;color:var(--text-dim);font-family:var(--font-mono);">No video selected</span>
@@ -58,7 +58,7 @@
       </div>
     </div>
 
-    <div class="card" id="pipeline-card">
+    <div class="card no-collapse" id="pipeline-card">
       <div class="card-header">
         <h2><span class="icon">⚡</span> Processing Pipeline</h2>
       </div>
@@ -90,6 +90,7 @@
         </div>
       </div>
     </div>
+
   </div>
 
   <!-- ── Right Column: Analysis ── -->
@@ -99,6 +100,7 @@
     <div class="card" id="stats-card">
       <div class="card-header">
         <h2><span class="icon">📊</span> Analysis Results</h2>
+        <span class="collapse-arrow">▼</span>
       </div>
       <div class="card-body" style="padding:14px 18px;">
         <div id="stats-grid">
@@ -126,6 +128,7 @@
     <div class="card">
       <div class="card-header">
         <h2><span class="icon">📈</span> Detection Timeline</h2>
+        <span class="collapse-arrow">▼</span>
       </div>
       <div class="card-body" style="padding:14px 18px;">
         <div id="timeline-bar">
@@ -138,6 +141,7 @@
     <div class="card" id="ai-summary-card">
       <div class="card-header">
         <h2><span class="icon">🤖</span> AI Summary <small style="color:var(--text-muted);font-weight:400;">Foundry Local</small></h2>
+        <span class="collapse-arrow">▼</span>
       </div>
       <div class="card-body">
         <div id="ai-summary-text">Select a video to view the AI-generated analysis summary.</div>
@@ -149,6 +153,7 @@
     <div class="card" id="vi-insights-card" style="display:none;">
       <div class="card-header">
         <h2><span class="icon">🎞️</span> Video Indexer Insights <small style="color:var(--accent);font-weight:400;">Arc-Enabled</small></h2>
+        <span class="collapse-arrow">▼</span>
       </div>
       <div class="card-body" style="padding:14px 18px;">
         <div id="vi-insights-content">
@@ -176,7 +181,10 @@
     <div class="card flex-grow" id="detections-card">
       <div class="card-header">
         <h2><span class="icon">📋</span> Detections</h2>
-        <span id="detection-count-badge" style="font-size:11px;font-family:var(--font-mono);color:var(--accent)"></span>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span id="detection-count-badge" style="font-size:11px;font-family:var(--font-mono);color:var(--accent)"></span>
+          <span class="collapse-arrow">▼</span>
+        </div>
       </div>
       <div class="card-body">
         <table id="detections-table">
@@ -202,6 +210,7 @@
     <div class="card" id="query-card">
       <div class="card-header">
         <h2><span class="icon">💬</span> Ask Foundry Local</h2>
+        <span class="collapse-arrow">▼</span>
       </div>
       <div class="card-body" style="padding:14px 18px;">
         <form id="query-form" onsubmit="return false;">
@@ -209,6 +218,41 @@
           <button type="submit" id="query-btn" title="Send">→</button>
         </form>
         <div id="query-response"></div>
+      </div>
+    </div>
+
+    <!-- GPU Metrics -->
+    <div class="card" id="gpu-card">
+      <div class="card-header">
+        <h2><span class="icon">🖥️</span> GPU Metrics <small style="color:var(--accent);font-weight:400;">NVIDIA Edge</small></h2>
+        <span class="collapse-arrow">▼</span>
+      </div>
+      <div class="card-body" style="padding:14px 18px;">
+        <div id="gpu-metrics-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <div class="stat-box" style="padding:8px 12px;">
+            <div class="stat-value" id="gpu-util" style="font-size:18px;">—</div>
+            <div class="stat-label">GPU Utilization</div>
+            <div id="gpu-util-bar" style="height:4px;background:var(--bg-card);border-radius:2px;margin-top:4px;overflow:hidden;">
+              <div id="gpu-util-fill" style="height:100%;width:0%;background:var(--accent);transition:width 0.5s;border-radius:2px;"></div>
+            </div>
+          </div>
+          <div class="stat-box" style="padding:8px 12px;">
+            <div class="stat-value" id="gpu-mem" style="font-size:18px;">—</div>
+            <div class="stat-label">Memory Usage</div>
+            <div id="gpu-mem-bar" style="height:4px;background:var(--bg-card);border-radius:2px;margin-top:4px;overflow:hidden;">
+              <div id="gpu-mem-fill" style="height:100%;width:0%;background:#f59e0b;transition:width 0.5s;border-radius:2px;"></div>
+            </div>
+          </div>
+          <div class="stat-box" style="padding:8px 12px;">
+            <div class="stat-value" id="gpu-temp" style="font-size:18px;">—</div>
+            <div class="stat-label">Temperature</div>
+          </div>
+          <div class="stat-box" style="padding:8px 12px;">
+            <div class="stat-value" id="gpu-power" style="font-size:18px;">—</div>
+            <div class="stat-label">Power Draw</div>
+          </div>
+        </div>
+        <div id="gpu-status" style="font-size:10px;color:var(--text-muted);margin-top:6px;font-family:var(--font-mono);">Connecting to DCGM…</div>
       </div>
     </div>
 
@@ -273,6 +317,15 @@
   const queryInput     = $('#query-input');
   const queryBtn       = $('#query-btn');
   const queryResponse  = $('#query-response');
+
+  // ── Collapsible cards ────────────────────────────────────────────
+  document.querySelectorAll('.card:not(.no-collapse) .card-header').forEach(header => {
+    header.addEventListener('click', (e) => {
+      if (e.target.closest('button, input, a')) return;
+      const card = header.closest('.card');
+      card.classList.toggle('collapsed');
+    });
+  });
 
   // ── Socket.IO ──────────────────────────────────────────────────────
   const socket = io();
@@ -887,6 +940,48 @@
     timelineCursor.style.left = `${pct}%`;
     drawDetections(videoPlayer.currentTime);
   });
+
+  // ── GPU Metrics ────────────────────────────────────────────────────
+  async function fetchGpuMetrics() {
+    try {
+      const resp = await fetch('/api/gpu-metrics');
+      const data = await resp.json();
+      if (data.status === 'healthy') {
+        const util = data.gpu_utilization || 0;
+        const memPct = data.memory_percent || 0;
+        const temp = data.temperature_c || 0;
+        const power = data.power_watts || 0;
+
+        $('#gpu-util').textContent = `${util}%`;
+        $('#gpu-util-fill').style.width = `${util}%`;
+        $('#gpu-util-fill').style.background = util > 80 ? '#ef4444' : util > 50 ? '#f59e0b' : 'var(--accent)';
+
+        $('#gpu-mem').textContent = `${memPct}%`;
+        $('#gpu-mem-fill').style.width = `${memPct}%`;
+
+        const memUsed = data.memory_used_mb || 0;
+        const memTotal = data.memory_total_mb || 0;
+        if (memTotal > 0) {
+          $('#gpu-mem').textContent = `${(memUsed/1024).toFixed(1)}/${(memTotal/1024).toFixed(1)} GB`;
+        }
+
+        $('#gpu-temp').textContent = `${temp}°C`;
+        $('#gpu-temp').style.color = temp > 80 ? '#ef4444' : temp > 60 ? '#f59e0b' : '';
+
+        $('#gpu-power').textContent = `${power.toFixed(0)}W`;
+        $('#gpu-status').textContent = `DCGM connected · Last update: ${new Date().toLocaleTimeString()}`;
+        $('#gpu-status').style.color = 'var(--accent)';
+      } else {
+        $('#gpu-status').textContent = 'DCGM exporter unavailable';
+        $('#gpu-status').style.color = 'var(--text-muted)';
+      }
+    } catch(e) {
+      $('#gpu-status').textContent = 'GPU metrics unavailable';
+      $('#gpu-status').style.color = 'var(--text-muted)';
+    }
+  }
+  fetchGpuMetrics();
+  setInterval(fetchGpuMetrics, 3000);
 
 })();
 </script>

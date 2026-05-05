@@ -1,0 +1,145 @@
+// ============================================================
+// DroneFleetDB — KQL Materialized Views & Query Functions
+// Microsoft Fabric Eventhouse: AdaptiveCloudLab-FleetOps
+// ============================================================
+// Run after kql-schema.kql has been applied and the
+// DroneMetrics table has been created.
+// ============================================================
+
+
+// ── 1. Hourly aggregate materialized view ────────────────────
+// Pre-aggregates per drone × area grid × hour.
+// Power BI time-series and map pages query this view — not the
+// raw table — to keep report queries fast at scale.
+
+.create materialized-view with (backfill=true) DroneMetrics_Hourly on table DroneMetrics {
+    DroneMetrics
+    | summarize
+        avg_rsrp_dbm        = avg(rsrp_dbm),
+        min_rsrp_dbm        = min(rsrp_dbm),
+        max_rsrp_dbm        = max(rsrp_dbm),
+        avg_sinr_db         = avg(sinr_db),
+        avg_dl_mbps         = avg(dl_mbps),
+        max_dl_mbps         = max(dl_mbps),
+        avg_latency_ms      = avg(latency_ms),
+        max_latency_ms      = max(latency_ms),
+        avg_packet_loss_pct = avg(packet_loss_pct),
+        max_packet_loss_pct = max(packet_loss_pct),
+        message_count       = count()
+      by bin(timestamp, 1h), drone_id, area_lat, area_lon
+}
+
+
+// ── 2. KPI query function — Fleet Health Overview ────────────
+// Used by Power BI Page 1 (Fleet Health Overview).
+// Returns a single-row summary for KPI cards.
+
+.create-or-alter function FleetHealthKPI(lookback_hours:int = 1) {
+    DroneMetrics
+    | where timestamp >= ago(lookback_hours * 1h)
+    | summarize
+        active_drones       = dcount(drone_id),
+        fleet_avg_rsrp      = round(avg(rsrp_dbm), 1),
+        fleet_avg_dl_mbps   = round(avg(dl_mbps), 1),
+        fleet_avg_latency   = round(avg(latency_ms), 2),
+        fleet_avg_loss      = round(avg(packet_loss_pct), 3),
+        total_messages      = count()
+}
+
+
+// ── 3. Signal trend function — 24-hour time series ───────────
+// Used by Power BI Page 1 line chart.
+
+.create-or-alter function SignalTrend24h() {
+    DroneMetrics_Hourly
+    | where timestamp >= ago(24h)
+    | summarize
+        avg_rsrp   = round(avg(avg_rsrp_dbm), 1),
+        avg_sinr   = round(avg(avg_sinr_db), 1),
+        avg_dl     = round(avg(avg_dl_mbps), 1),
+        avg_lat_ms = round(avg(avg_latency_ms), 2)
+      by bin(timestamp, 1h)
+    | order by timestamp asc
+}
+
+
+// ── 4. Drone status distribution ─────────────────────────────
+// Used by Power BI Page 1 donut chart.
+
+.create-or-alter function DroneStatusDistribution(lookback_minutes:int = 5) {
+    DroneMetrics
+    | where timestamp >= ago(lookback_minutes * 1m)
+    | summarize latest = arg_max(timestamp, status) by drone_id
+    | summarize drone_count = count() by status
+    | order by drone_count desc
+}
+
+
+// ── 5. Area signal heatmap ────────────────────────────────────
+// Used by Power BI Page 2 map visual.
+// Returns avg RSRP per area grid cell for the last N hours.
+
+.create-or-alter function AreaSignalHeatmap(lookback_hours:int = 1) {
+    DroneMetrics_Hourly
+    | where timestamp >= ago(lookback_hours * 1h)
+    | summarize
+        avg_rsrp_dbm  = round(avg(avg_rsrp_dbm), 1),
+        avg_dl_mbps   = round(avg(avg_dl_mbps), 1),
+        avg_latency   = round(avg(avg_latency_ms), 2),
+        message_count = sum(message_count)
+      by area_lat, area_lon
+}
+
+
+// ── 6. Anomaly events ─────────────────────────────────────────
+// Used by Power BI Page 3 anomaly table.
+// Flags individual readings that breach SLA thresholds.
+// Threshold parameters allow customisation without modifying the function.
+
+.create-or-alter function AnomalyEvents(
+    lookback_hours:int = 24,
+    latency_threshold_ms:real = 15.0,
+    packet_loss_threshold_pct:real = 1.0,
+    rsrp_threshold_dbm:int = -100
+) {
+    DroneMetrics
+    | where timestamp >= ago(lookback_hours * 1h)
+    | extend
+        high_latency    = latency_ms > latency_threshold_ms,
+        high_loss       = packet_loss_pct > packet_loss_threshold_pct,
+        weak_signal     = rsrp_dbm < rsrp_threshold_dbm,
+        any_anomaly     = (latency_ms > latency_threshold_ms
+                          or packet_loss_pct > packet_loss_threshold_pct
+                          or rsrp_dbm < rsrp_threshold_dbm)
+    | where any_anomaly
+    | project
+        timestamp,
+        drone_id,
+        status,
+        rsrp_dbm,
+        sinr_db,
+        latency_ms,
+        packet_loss_pct,
+        dl_mbps,
+        area_lat,
+        area_lon,
+        high_latency,
+        high_loss,
+        weak_signal
+    | order by timestamp desc
+    | take 200
+}
+
+
+// ── 7. Packet loss trend ──────────────────────────────────────
+// Used by Power BI Page 3 packet-loss trend chart.
+
+.create-or-alter function PacketLossTrend(lookback_hours:int = 24) {
+    DroneMetrics_Hourly
+    | where timestamp >= ago(lookback_hours * 1h)
+    | summarize
+        avg_loss_pct = round(avg(avg_packet_loss_pct), 4),
+        max_loss_pct = round(max(max_packet_loss_pct), 4)
+      by bin(timestamp, 1h)
+    | order by timestamp asc
+}
