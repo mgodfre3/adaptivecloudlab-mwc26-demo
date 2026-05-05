@@ -1,8 +1,8 @@
-# 8-Minute Demo Briefing: Real-Time Drone Network Monitoring with Edge AI
+# 10-Minute Demo Briefing: Real-Time Drone Network Monitoring with Edge AI + Fabric BI
 
 **Denver 2026 — Adaptive Cloud Lab**
 
-> **Headline:** *"Real-time edge AI powering live drone network monitoring — all running on two physical servers, zero cloud compute."*
+> **Headline:** *"Real-time edge AI at the field, enterprise BI in the boardroom — one data pipeline, two personas, appropriate access at every layer."*
 
 ---
 
@@ -15,7 +15,8 @@
 5. [IoT Operations & Data Sovereignty](#iot-operations--data-sovereignty)
 6. [Observability — Grafana](#observability--grafana)
 7. [Why Edge AI Matters](#why-edge-ai-matters)
-8. [Demo Flow Checklist](#demo-flow-checklist)
+8. [The Office View — Power BI + Microsoft Fabric](#the-office-view--power-bi--microsoft-fabric)
+9. [Demo Flow Checklist](#demo-flow-checklist)
 
 ---
 
@@ -318,6 +319,61 @@ The AIO Dataflow (`k8s/iot-ops-dataflow.yaml`) transforms data before export:
 
 ---
 
+## The Office View — Power BI + Microsoft Fabric
+
+**Talk track (Minute 8–10)**
+
+While field engineers use the edge dashboard for live operations, office staff use Power BI reports backed by **Microsoft Fabric** to review fleet-wide historical data across all deployments.
+
+### Data Flow
+
+```
+[Azure Local — Field]              [Azure Cloud — Office]
+ Drone Simulator                    Microsoft Fabric Workspace
+   → AIO MQTT                         ← IoT Hub Eventstream
+   → IoT Hub ─────────────────────→      Eventhouse (KQL DB)
+                                               ↓
+  (AIO Dataflow rounds GPS                Power BI Semantic Model
+   to ~1.1 km, strips altitude)                ↓
+                                         Power BI Report
+```
+
+The **AIO Dataflow** (`k8s/iot-ops-dataflow.yaml`) anonymises telemetry before export — GPS rounded to area-level grids, altitude stripped. Power BI only ever sees this sanitised data.
+
+### Two-Layer Data Architecture
+
+| Layer | Tool | Who Uses It | Data Visible |
+|---|---|---|---|
+| **Edge real-time** | Flask + Leaflet on AKS Arc | Field engineers, drone ops | Full telemetry — exact GPS, live AI insights |
+| **Cloud aggregate** | Fabric Eventhouse + Power BI | Office staff, managers, execs | Anonymised, area-level grids, historical trends |
+| **Transit** | IoT Hub → Fabric Eventstream | Automated pipeline | Already-anonymised AIO Dataflow output |
+
+### Power BI Report — Three Pages
+
+**Page 1 — Fleet Health Overview (executive view)**
+
+KPI cards for active drones, fleet-average RSRP, DL throughput, and latency. A 24-hour signal trend line and a donut showing drones by lifecycle state (patrolling / returning / charging).
+
+**Page 2 — Network Quality Map**
+
+Heat map of RSRP signal quality by ~1.1 km area grid. Colours show coverage strength across the deployment area. Because GPS is pre-rounded by the dataflow, no exact positions are ever visible here.
+
+**Page 3 — Anomaly & Alert History**
+
+Table of the last 200 readings that breached SLA thresholds (latency > 15 ms, packet loss > 1%, RSRP < −100 dBm) and a packet-loss percentage trend over the last 24 hours.
+
+### Fabric Setup
+
+See `fabric/README.md` for step-by-step instructions to create the workspace, Eventhouse, Eventstream, and publish the Power BI template (`fabric/powerbi-report.pbit`).
+
+Full talking points for this section are in `fabric/demo-talking-points.md`.
+
+### Key Message
+
+> *"Azure Local handles the field — real-time, private, resilient. Fabric and Power BI handle the boardroom — aggregated, accessible, beautiful. The same IoT Hub that feeds the edge dashboard feeds the enterprise BI layer. One architecture, both worlds."*
+
+---
+
 ## Demo Flow Checklist
 
 ### Pre-Demo (Day Before)
@@ -328,8 +384,13 @@ The AIO Dataflow (`k8s/iot-ops-dataflow.yaml`) transforms data before export:
 - [ ] All pods running: `kubectl get pods -n drone-demo -n foundry-local -n monitoring`
 - [ ] GPU metrics appearing in Grafana
 - [ ] Drones actively patrolling on the map
+- [ ] Fabric Eventhouse created and `kql-schema.kql` / `kql-views.kql` applied
+- [ ] Fabric Eventstream running (verify data preview shows messages)
+- [ ] Power BI report published to `AdaptiveCloudLab-FleetOps` workspace
+- [ ] Power BI report accessible in browser tab (pre-loaded and refreshed)
+- [ ] (Optional) `/analytics` route working at `https://mwc.adaptivecloudlab.com/analytics`
 
-### 8-Minute Demo Flow
+### 10-Minute Demo Flow
 
 | Time | Show | Say |
 |---|---|---|
@@ -337,10 +398,11 @@ The AIO Dataflow (`k8s/iot-ops-dataflow.yaml`) transforms data before export:
 | **2–4 min** | Telemetry cards + fleet stats | *"Real-time 5G metrics — signal strength, throughput, latency. Drones return to base at low battery and are replaced."* |
 | **4–6 min** | AI insights panel + Grafana GPU | *"Phi-4 Mini on the NVIDIA A2 GPU analyzes the fleet every 15 seconds. Watch the GPU utilization spike."* |
 | **6–8 min** | Dataflow YAML + architecture diagram | *"Raw data stays on-prem. Only anonymized metrics reach Azure. This is edge AI done right."* |
+| **8–10 min** | Power BI report (browser tab) | *"Now let me show you what the office sees — same data pipeline, different persona, appropriate access at each layer."* |
 
 ### Closing Statement
 
-> *"This demo shows what's possible when you combine Kubernetes, edge AI, and controlled cloud integration. Enterprise-grade AI inference running on affordable edge hardware, with full data sovereignty — no cloud compute required."*
+> *"This demo shows what's possible when you combine Kubernetes, edge AI, and controlled cloud integration — and extend it all the way to the boardroom with Fabric and Power BI. Enterprise-grade AI inference at the edge, fleet-wide analytics in the cloud, with full data sovereignty baked in at every layer."*
 
 ### Fallback Options
 
@@ -349,3 +411,4 @@ The AIO Dataflow (`k8s/iot-ops-dataflow.yaml`) transforms data before export:
 | Dashboard not responding | Show README.md screenshots and architecture diagrams |
 | GPU unavailable | Show historical Grafana metrics; explain dataflow conceptually |
 | Network issues | Demonstrate demo mode — runs fully offline with synthetic drones |
+| Fabric / Power BI not loading | Show `fabric/` directory files and explain the architecture verbally |

@@ -7,6 +7,12 @@ graph TB
         KV["Azure Key Vault<br/><i>pdx-kv</i><br/>Connection Strings"]
         ACR["Azure Container Registry<br/><i>acxcontregwus2 (Premium)</i><br/>Dashboard & Simulator Images"]
         Arc["Azure Arc<br/>Connected Cluster"]
+
+        subgraph Fabric["📊 Microsoft Fabric (AdaptiveCloudLab-FleetOps)"]
+            Eventstream["Fabric Eventstream<br/><i>DroneFleetStream</i><br/>IoT Hub → KQL ingest"]
+            Eventhouse["Eventhouse / KQL DB<br/><i>DroneFleetDB</i><br/>DroneMetrics + hourly views"]
+            PBI["Power BI Report<br/><i>Drone Fleet Analytics</i><br/>Fleet Health · Map · Anomalies"]
+        end
     end
 
     subgraph AKSArc["🖥️ AKS Arc on Azure Local — 2× Lenovo SE350"]
@@ -42,20 +48,25 @@ graph TB
         subgraph Platform["Platform Services"]
             CertMgr["cert-manager v1.19.2"]
             TrustMgr["trust-manager v0.20.3"]
-            IoTOps["Azure IoT Operations"]
+            IoTOps["Azure IoT Operations<br/><i>AIO Dataflow: anonymise + export</i>"]
         end
     end
 
-    subgraph Users["👤 Demo Visitors"]
+    subgraph FieldUsers["👷 Field Users"]
         Browser["Browser / Kiosk<br/>https://mwc.adaptivecloudlab.com"]
+    end
+
+    subgraph OfficeUsers["🏢 Office Users"]
+        OfficeBrowser["Power BI Browser<br/>app.powerbi.com"]
     end
 
     subgraph DNS["DNS"]
         DNSRecord["mwc.adaptivecloudlab.com<br/>→ 172.21.229.201"]
     end
 
-    %% Data Flow
+    %% Edge data flow
     Simulator -->|"D2C Telemetry<br/>(AMQP)"| IoTHub
+    IoTOps -->|"Anonymised export<br/>(GPS rounded)"| IoTHub
     IoTHub -->|"Event Hub<br/>Consumer"| Dashboard
     Dashboard -->|"HTTPS /v1/chat/completions<br/>(in-cluster)"| Phi3
     Phi3 -->|"AI Insights<br/>(JSON)"| Dashboard
@@ -64,6 +75,14 @@ graph TB
     DNSRecord --> MetalLB
     MetalLB --> Ingress
     Ingress --> Dashboard
+
+    %% Fabric / BI data flow
+    IoTHub -->|"Eventstream ingest<br/>(anonymised only)"| Eventstream
+    Eventstream -->|"KQL ingest"| Eventhouse
+    Eventhouse -->|"DirectQuery / import"| PBI
+    OfficeBrowser -->|"HTTPS"| PBI
+
+    %% Management plane
     ACR -.->|"Image Pull"| Dashboard
     ACR -.->|"Image Pull"| Simulator
     Arc -.->|"Cluster Management"| AKSArc
@@ -77,10 +96,12 @@ graph TB
     classDef gpu fill:#FFF3E0,stroke:#E65100,color:#BF360C
     classDef user fill:#F3E5F5,stroke:#6A1B9A,color:#4A148C
     classDef dns fill:#FFFDE7,stroke:#F9A825,color:#F57F17
+    classDef fabric fill:#EDE7F6,stroke:#4527A0,color:#311B92
 
     class IoTHub,KV,ACR,Arc cloud
     class Dashboard,Simulator,Ingress,MetalLB,CertMgr,TrustMgr,IoTOps,CP,S1Node,S2Node edge
     class FoundryOp,Phi3 gpu
-    class Browser user
+    class Browser,OfficeBrowser user
     class DNSRecord dns
+    class Eventstream,Eventhouse,PBI fabric
 ```

@@ -64,6 +64,12 @@ EDGE_AI_API_KEY = os.getenv("EDGE_AI_API_KEY", "")
 EDGE_AI_ENABLED = os.getenv("EDGE_AI_ENABLED", "false").lower() == "true"
 EDGE_AI_INTERVAL = int(os.getenv("EDGE_AI_INTERVAL", "15"))  # seconds between analyses
 
+# Power BI embedded analytics (optional — office view)
+POWERBI_EMBED_ENABLED = os.getenv("POWERBI_EMBED_ENABLED", "false").lower() == "true"
+POWERBI_REPORT_URL = os.getenv("POWERBI_REPORT_URL", "")
+POWERBI_WORKSPACE_ID = os.getenv("POWERBI_WORKSPACE_ID", "")
+POWERBI_REPORT_ID = os.getenv("POWERBI_REPORT_ID", "")
+
 # ── Map / location config (override per demo environment) ────────────────────
 MAP_LOCATION_NAME = os.getenv("MAP_LOCATION_NAME", "Denver, CO")
 MAP_CENTER_LAT = float(os.getenv("MAP_CENTER_LAT", "39.7484"))
@@ -187,6 +193,19 @@ def cell_towers():
                            center_lon=MAP_CENTER_LON,
                            zoom=MAP_ZOOM,
                            location_name=MAP_LOCATION_NAME)
+
+
+@app.route("/analytics")
+def analytics():
+    """Office view: embedded Power BI report showing fleet-wide aggregated analytics."""
+    return render_template(
+        "analytics.html",
+        powerbi_enabled=POWERBI_EMBED_ENABLED,
+        powerbi_report_url=POWERBI_REPORT_URL,
+        powerbi_workspace_id=POWERBI_WORKSPACE_ID,
+        powerbi_report_id=POWERBI_REPORT_ID,
+        location_name=MAP_LOCATION_NAME,
+    )
 
 
 @app.route("/api/reset", methods=["POST"])

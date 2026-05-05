@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fleet Analytics — {{ location_name }}</title>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0d1117;
+      --surface:   #161b22;
+      --border:    #30363d;
+      --accent:    #58a6ff;
+      --accent2:   #7c5cff;
+      --text:      #e6edf3;
+      --muted:     #8b949e;
+      --success:   #3fb950;
+      --warn:      #d29922;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Top bar ── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 1.5rem;
+      height: 56px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .brand h1 {
+      font-size: 1.05rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .brand .subtitle {
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+    }
+
+    .nav-links a {
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 0.85rem;
+      padding: 0.3rem 0.6rem;
+      border-radius: 6px;
+      transition: color 0.15s, background 0.15s;
+    }
+
+    .nav-links a:hover { color: var(--text); background: var(--border); }
+    .nav-links a.active { color: var(--accent); }
+
+    /* ── Layout ── */
+    main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      padding: 1.5rem;
+      gap: 1.5rem;
+    }
+
+    /* ── Info banner (when embed not configured) ── */
+    .info-banner {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 2rem;
+    }
+
+    .info-banner h2 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-bottom: 0.75rem;
+      color: var(--accent);
+    }
+
+    .info-banner p {
+      font-size: 0.9rem;
+      color: var(--muted);
+      line-height: 1.6;
+      margin-bottom: 0.5rem;
+    }
+
+    .info-banner code {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0.15rem 0.4rem;
+      font-size: 0.82rem;
+      color: var(--success);
+    }
+
+    .env-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+      margin-top: 1rem;
+    }
+
+    .env-table th, .env-table td {
+      text-align: left;
+      padding: 0.45rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .env-table th { color: var(--muted); font-weight: 500; }
+    .env-table td:first-child { color: var(--success); font-family: monospace; }
+
+    /* ── Persona cards ── */
+    .persona-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+
+    .persona-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.25rem 1.5rem;
+    }
+
+    .persona-card .persona-icon { font-size: 1.8rem; margin-bottom: 0.5rem; }
+
+    .persona-card h3 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      margin-bottom: 0.4rem;
+    }
+
+    .persona-card p {
+      font-size: 0.82rem;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .persona-card .tag {
+      display: inline-block;
+      margin-top: 0.6rem;
+      font-size: 0.72rem;
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+      font-weight: 500;
+    }
+
+    .tag-edge    { background: rgba(63,185,80,0.15);  color: var(--success); }
+    .tag-office  { background: rgba(124,92,255,0.15); color: var(--accent2); }
+
+    /* ── Embed frame ── */
+    .embed-wrapper {
+      flex: 1;
+      min-height: 0;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .embed-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.6rem 1rem;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.82rem;
+      color: var(--muted);
+      flex-shrink: 0;
+    }
+
+    .embed-header .embed-title { color: var(--text); font-weight: 500; }
+
+    .embed-header a {
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.78rem;
+    }
+
+    iframe#pbi-frame {
+      flex: 1;
+      width: 100%;
+      border: none;
+      min-height: 600px;
+    }
+
+    /* ── Loading spinner ── */
+    .embed-loading {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0.75rem;
+      height: 200px;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+
+    .spinner {
+      width: 28px; height: 28px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Responsive ── */
+    @media (max-width: 640px) {
+      .persona-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ─── Header ───────────────────────────────────────────────────────────── -->
+  <header>
+    <div class="brand">
+      <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5"
+           style="color: #7c5cff;">
+        <rect x="3" y="3" width="7" height="7" rx="1"/>
+        <rect x="14" y="3" width="7" height="7" rx="1"/>
+        <rect x="3" y="14" width="7" height="7" rx="1"/>
+        <rect x="14" y="14" width="7" height="7" rx="1"/>
+      </svg>
+      <div>
+        <h1>Fleet Analytics</h1>
+        <span class="subtitle">Microsoft Fabric + Power BI &middot; {{ location_name }}</span>
+      </div>
+    </div>
+    <nav class="nav-links">
+      <a href="/">🌐 Live Dashboard</a>
+      <a href="/analytics" class="active">📊 Fleet Analytics</a>
+    </nav>
+  </header>
+
+  <!-- ─── Main ─────────────────────────────────────────────────────────────── -->
+  <main>
+
+    <!-- Persona context cards -->
+    <div class="persona-grid">
+      <div class="persona-card">
+        <div class="persona-icon">👷</div>
+        <h3>Field View — Live Dashboard</h3>
+        <p>Field engineers and drone operators use the real-time edge dashboard. Exact GPS positions,
+           per-second telemetry, and on-prem Phi-4 AI alerts — all processed on Azure Local hardware,
+           nothing sensitive leaves the building.</p>
+        <span class="tag tag-edge">AKS Arc · Azure Local · Phi-4 Mini</span>
+      </div>
+      <div class="persona-card">
+        <div class="persona-icon">🏢</div>
+        <h3>Office View — Fleet Analytics</h3>
+        <p>Fleet managers and executives review aggregated, anonymised network quality data across
+           all deployments. GPS is rounded to ~1.1 km area grids before export — no exact positions
+           ever reach Fabric or Power BI.</p>
+        <span class="tag tag-office">Microsoft Fabric · Power BI · KQL</span>
+      </div>
+    </div>
+
+    {% if powerbi_enabled and powerbi_report_url %}
+
+    <!-- Power BI embedded report -->
+    <div class="embed-wrapper">
+      <div class="embed-header">
+        <span class="embed-title">📊 Drone Fleet Analytics — Power BI</span>
+        {% if powerbi_report_url %}
+        <a href="{{ powerbi_report_url }}" target="_blank" rel="noopener">Open in Power BI ↗</a>
+        {% endif %}
+      </div>
+      <div class="embed-loading" id="embed-loading">
+        <div class="spinner"></div>
+        <span>Loading Power BI report…</span>
+      </div>
+      <iframe
+        id="pbi-frame"
+        src="about:blank"
+        data-src="{{ powerbi_report_url }}"
+        title="Drone Fleet Analytics — Power BI"
+        allowfullscreen
+        style="display:none;"
+      ></iframe>
+    </div>
+
+    {% else %}
+
+    <!-- Setup instructions (embed not configured) -->
+    <div class="info-banner">
+      <h2>📋 Power BI Embed Not Configured</h2>
+      <p>
+        To enable the embedded Power BI report, set the following environment variables in
+        <code>dashboard/.env</code> and redeploy:
+      </p>
+      <table class="env-table">
+        <thead>
+          <tr><th>Variable</th><th>Description</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>POWERBI_EMBED_ENABLED</td>
+            <td>Set to <code>true</code> to show the embedded report on this page</td>
+          </tr>
+          <tr>
+            <td>POWERBI_REPORT_URL</td>
+            <td>Power BI embed URL — copy from <em>Share → Embed report → Website or portal</em></td>
+          </tr>
+          <tr>
+            <td>POWERBI_WORKSPACE_ID</td>
+            <td>Fabric workspace GUID (shown in the Power BI URL)</td>
+          </tr>
+          <tr>
+            <td>POWERBI_REPORT_ID</td>
+            <td>Report GUID (shown in the Power BI URL)</td>
+          </tr>
+        </tbody>
+      </table>
+      <p style="margin-top:1rem;">
+        See <code>fabric/README.md</code> for step-by-step instructions to create the Fabric
+        workspace, Eventhouse, Eventstream, and publish the Power BI template.
+      </p>
+    </div>
+
+    <!-- Architecture diagram (text) -->
+    <div class="info-banner" style="margin-top:0;">
+      <h2>🔗 Data Pipeline Architecture</h2>
+      <p>The same IoT Hub that feeds the edge dashboard also feeds the Fabric analytics layer.
+         The AIO Dataflow anonymises telemetry before export — GPS is rounded, altitude and
+         device metadata are stripped.</p>
+      <p style="margin-top:0.75rem; font-family: monospace; font-size: 0.82rem; color: var(--muted); white-space: pre-wrap;">
+[Azure Local — Field]             [Azure Cloud — Office]
+ Drone Simulator                   Microsoft Fabric Workspace
+   → AIO MQTT                        ← IoT Hub Eventstream
+   → IoT Hub ──────────────────→        Eventhouse (KQL DB)
+                                               ↓
+  AIO Dataflow rounds GPS               Power BI Report
+  to ~1.1 km, strips altitude        (this page, when configured)
+      </p>
+    </div>
+
+    {% endif %}
+
+  </main>
+
+  <script>
+    // Lazy-load the Power BI iframe only after the page is interactive
+    const frame = document.getElementById("pbi-frame");
+    const loading = document.getElementById("embed-loading");
+
+    if (frame) {
+      frame.addEventListener("load", () => {
+        if (loading) loading.style.display = "none";
+        frame.style.display = "block";
+      });
+      // Trigger load
+      frame.src = frame.dataset.src;
+    }
+  </script>
+
+</body>
+</html>
