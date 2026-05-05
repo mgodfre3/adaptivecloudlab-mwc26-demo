@@ -1,0 +1,50 @@
+// ============================================================
+// DroneFleetDB — KQL Schema
+// Microsoft Fabric Eventhouse: AdaptiveCloudLab-FleetOps
+// ============================================================
+// Run these statements in sequence against the DroneFleetDB
+// KQL database after creating the Eventhouse.
+// ============================================================
+
+// ── 1. Raw telemetry table ───────────────────────────────────
+// Receives the anonymised payload exported by the AIO Dataflow
+// (k8s/iot-ops-dataflow.yaml → drone-summary IoT Hub topic).
+// GPS is already area-level (floor(x*100)/100 ≈ 1.1 km grid).
+
+.create-merge table DroneMetrics (
+    ingestion_time:  datetime,      // set by Eventhouse at ingest
+    timestamp:       datetime,      // original device timestamp (UTC ISO-8601)
+    drone_id:        string,        // e.g. "drone-alpha"
+    status:          string,        // patrolling | returning | charging | launching | landing | hovering
+    rsrp_dbm:        int,           // Reference Signal Received Power (dBm)
+    sinr_db:         real,          // Signal-to-Interference+Noise Ratio (dB)
+    dl_mbps:         real,          // Downlink throughput (Mbps)
+    latency_ms:      real,          // Round-trip latency (ms)
+    packet_loss_pct: real,          // Packet loss percentage (0–100)
+    area_lat:        real,          // Area-level latitude  (1.1 km precision)
+    area_lon:        real           // Area-level longitude (1.1 km precision)
+)
+
+// ── 2. Ingestion mapping — IoT Hub JSON payload ──────────────
+// Maps the flat JSON produced by the AIO Dataflow to table columns.
+
+.create-or-alter table DroneMetrics ingestion json mapping 'DroneMetricsMapping'
+'['
+'  {"column":"ingestion_time",  "Properties":{"Path":"$.ingestion_time"}},'
+'  {"column":"timestamp",       "Properties":{"Path":"$.timestamp"}},'
+'  {"column":"drone_id",        "Properties":{"Path":"$.drone_id"}},'
+'  {"column":"status",          "Properties":{"Path":"$.status"}},'
+'  {"column":"rsrp_dbm",        "Properties":{"Path":"$.rsrp_dbm"}},'
+'  {"column":"sinr_db",         "Properties":{"Path":"$.sinr_db"}},'
+'  {"column":"dl_mbps",         "Properties":{"Path":"$.dl_mbps"}},'
+'  {"column":"latency_ms",      "Properties":{"Path":"$.latency_ms"}},'
+'  {"column":"packet_loss_pct", "Properties":{"Path":"$.packet_loss_pct"}},'
+'  {"column":"area_lat",        "Properties":{"Path":"$.area_lat"}},'
+'  {"column":"area_lon",        "Properties":{"Path":"$.area_lon"}}'
+']'
+
+// ── 3. Retention policy ──────────────────────────────────────
+// Keep 90 days of raw telemetry (adjust as needed).
+
+.alter table DroneMetrics policy retention
+'{"SoftDeletePeriod":"90.00:00:00","Recoverability":"Enabled"}'
