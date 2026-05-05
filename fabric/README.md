@@ -71,7 +71,7 @@ https://<workspace-id>.kusto.fabric.microsoft.com
 1. In the workspace, click **New item** → **Eventstream**
 2. Name: `DroneFleetStream`
 3. **Add source** → **Azure IoT Hub**
-   - Select your subscription and IoT Hub (`pdx-iothub`)
+   - Select your subscription and IoT Hub (e.g. `pdx-iothub` — use the hub deployed by `scripts/02-deploy-iot-hub.ps1`)
    - Consumer group: create a new one named `fabric-ingest`
    - Data format: **JSON**
 4. **Add destination** → **KQL Database (Eventhouse)**

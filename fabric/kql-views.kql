@@ -36,7 +36,7 @@
 
 .create-or-alter function FleetHealthKPI(lookback_hours:int = 1) {
     DroneMetrics
-    | where timestamp >= ago(totimespan(strcat(tostring(lookback_hours), "h")))
+    | where timestamp >= ago(lookback_hours * 1h)
     | summarize
         active_drones       = dcount(drone_id),
         fleet_avg_rsrp      = round(avg(rsrp_dbm), 1),
@@ -68,7 +68,7 @@
 
 .create-or-alter function DroneStatusDistribution(lookback_minutes:int = 5) {
     DroneMetrics
-    | where timestamp >= ago(totimespan(strcat(tostring(lookback_minutes), "m")))
+    | where timestamp >= ago(lookback_minutes * 1m)
     | summarize latest = arg_max(timestamp, status) by drone_id
     | summarize drone_count = count() by status
     | order by drone_count desc
@@ -81,7 +81,7 @@
 
 .create-or-alter function AreaSignalHeatmap(lookback_hours:int = 1) {
     DroneMetrics_Hourly
-    | where timestamp >= ago(totimespan(strcat(tostring(lookback_hours), "h")))
+    | where timestamp >= ago(lookback_hours * 1h)
     | summarize
         avg_rsrp_dbm  = round(avg(avg_rsrp_dbm), 1),
         avg_dl_mbps   = round(avg(avg_dl_mbps), 1),
@@ -94,15 +94,23 @@
 // ── 6. Anomaly events ─────────────────────────────────────────
 // Used by Power BI Page 3 anomaly table.
 // Flags individual readings that breach SLA thresholds.
+// Threshold parameters allow customisation without modifying the function.
 
-.create-or-alter function AnomalyEvents(lookback_hours:int = 24) {
+.create-or-alter function AnomalyEvents(
+    lookback_hours:int = 24,
+    latency_threshold_ms:real = 15.0,
+    packet_loss_threshold_pct:real = 1.0,
+    rsrp_threshold_dbm:int = -100
+) {
     DroneMetrics
-    | where timestamp >= ago(totimespan(strcat(tostring(lookback_hours), "h")))
+    | where timestamp >= ago(lookback_hours * 1h)
     | extend
-        high_latency    = latency_ms > 15,
-        high_loss       = packet_loss_pct > 1.0,
-        weak_signal     = rsrp_dbm < -100,
-        any_anomaly     = (latency_ms > 15 or packet_loss_pct > 1.0 or rsrp_dbm < -100)
+        high_latency    = latency_ms > latency_threshold_ms,
+        high_loss       = packet_loss_pct > packet_loss_threshold_pct,
+        weak_signal     = rsrp_dbm < rsrp_threshold_dbm,
+        any_anomaly     = (latency_ms > latency_threshold_ms
+                          or packet_loss_pct > packet_loss_threshold_pct
+                          or rsrp_dbm < rsrp_threshold_dbm)
     | where any_anomaly
     | project
         timestamp,
@@ -128,7 +136,7 @@
 
 .create-or-alter function PacketLossTrend(lookback_hours:int = 24) {
     DroneMetrics_Hourly
-    | where timestamp >= ago(totimespan(strcat(tostring(lookback_hours), "h")))
+    | where timestamp >= ago(lookback_hours * 1h)
     | summarize
         avg_loss_pct = round(avg(avg_packet_loss_pct), 4),
         max_loss_pct = round(max(max_packet_loss_pct), 4)
