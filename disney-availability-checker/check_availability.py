@@ -325,17 +325,26 @@ class DisneyClient:
                 text = script.string or ""
                 if "available" in text.lower() and check_date in text:
                     try:
-                        # Try to extract JSON blobs from script content
-                        json_matches = re.findall(r"\{[^{}]{0,2000}\}", text, re.DOTALL)
-                        for blob in json_matches:
-                            try:
-                                obj = json.loads(blob)
-                                if isinstance(obj, dict) and obj.get("available"):
-                                    slots.append(
-                                        {"date": check_date, "time": "", "raw": obj}
-                                    )
-                            except ValueError:
-                                pass
+                        # Try to parse the entire script block as JSON first,
+                        # then fall back to extracting the outermost JSON value
+                        # starting at each '{' — handles arbitrarily nested objects.
+                        candidates = []
+                        try:
+                            candidates.append(json.loads(text))
+                        except ValueError:
+                            # Walk the script looking for JSON start positions
+                            for i, ch in enumerate(text):
+                                if ch in ('{', '['):
+                                    try:
+                                        obj = json.loads(text[i:])
+                                        candidates.append(obj)
+                                    except ValueError:
+                                        pass
+                        for obj in candidates:
+                            if isinstance(obj, dict) and obj.get("available"):
+                                slots.append(
+                                    {"date": check_date, "time": "", "raw": obj}
+                                )
                     except Exception:
                         pass
 
