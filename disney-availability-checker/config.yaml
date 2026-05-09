@@ -1,0 +1,61 @@
+# Disney EPCOT Fireworks Cruise Availability Checker Configuration
+
+checker:
+  # Experience to monitor
+  experience: "epcot-fireworks-cruise"   # or "mk-fireworks-cruise"
+
+  # Dates to watch (YYYY-MM-DD). Leave empty [] to watch all available dates.
+  watch_dates:
+    - "2026-07-04"
+    - "2026-07-05"
+    - "2026-12-31"
+
+  # Number of guests (1-10 for a private cruise)
+  party_size: 2
+
+  # How often to check, in minutes (recommend >= 5 to avoid rate limiting)
+  poll_interval_minutes: 10
+
+  # Stop checking once availability is found on any watched date
+  stop_on_first_alert: false
+
+alerts:
+  # Email via SMTP
+  email:
+    enabled: false
+    smtp_host: "smtp.gmail.com"
+    smtp_port: 587
+    smtp_use_tls: true
+    sender: "your_email@gmail.com"
+    # App password (for Gmail) or SMTP password — set via SMTP_PASSWORD env var
+    recipients:
+      - "your_email@gmail.com"
+
+  # Microsoft Teams incoming webhook
+  teams:
+    enabled: false
+    # Set via TEAMS_WEBHOOK_URL env var, or paste URL here
+    webhook_url: ""
+
+  # Slack incoming webhook
+  slack:
+    enabled: false
+    # Set via SLACK_WEBHOOK_URL env var, or paste URL here
+    webhook_url: ""
+
+  # Discord webhook
+  discord:
+    enabled: false
+    # Set via DISCORD_WEBHOOK_URL env var, or paste URL here
+    webhook_url: ""
+
+# Advanced: Disney internal endpoint overrides (normally auto-discovered)
+disney:
+  # Base URL used for all requests
+  base_url: "https://disneyworld.disney.go.com"
+  # User-Agent to send with every request
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+  # Request timeout in seconds
+  timeout: 30
+  # Max retries on transient errors
+  max_retries: 3
