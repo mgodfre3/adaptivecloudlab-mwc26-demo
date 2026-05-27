@@ -1,0 +1,24 @@
+# Self-Signed ClusterIssuer for TLS
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: drone-demo-selfsigned
+spec:
+  selfSigned: {}
+---
+# TLS Certificate — dnsNames patched per-cluster
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: drone-demo-tls
+  namespace: drone-demo
+spec:
+  secretName: drone-demo-tls
+  issuerRef:
+    name: drone-demo-selfsigned
+    kind: ClusterIssuer
+  dnsNames:
+    - demo.local
+    - "*.demo.local"
+  duration: 8760h
+  renewBefore: 720h

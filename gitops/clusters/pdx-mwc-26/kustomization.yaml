@@ -1,0 +1,7 @@
+# Cluster entry point for pdx-mwc-26
+# Flux watches this directory and reconciles infrastructure + apps
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../infrastructure/overlays/pdx-mwc-26
+  - ../../apps/overlays/pdx-mwc-26
