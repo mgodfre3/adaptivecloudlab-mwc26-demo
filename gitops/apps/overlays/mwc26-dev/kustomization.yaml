@@ -1,0 +1,133 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+patches:
+  # -- Drone Demo ConfigMap: Dev-specific values --
+  - target:
+      kind: ConfigMap
+      name: drone-demo-config
+      namespace: drone-demo
+    patch: |
+      - op: replace
+        path: /data/FLASK_SECRET_KEY
+        value: "mwc26-demo-dashboard-dev"
+      - op: replace
+        path: /data/IOT_HUB_NAME
+        value: "pdx-iothub"
+      - op: replace
+        path: /data/MAP_LOCATION_NAME
+        value: "Denver, CO (Dev)"
+      - op: replace
+        path: /data/MAP_CENTER_LAT
+        value: "39.7484"
+      - op: replace
+        path: /data/MAP_CENTER_LON
+        value: "-104.9951"
+      - op: replace
+        path: /data/MAP_BASE_LAT
+        value: "39.7437"
+      - op: replace
+        path: /data/MAP_BASE_LON
+        value: "-104.9916"
+      - op: replace
+        path: /data/MAP_ZOOM
+        value: "13"
+
+  # -- Ingress: use ClusterIP only in dev (no external LB needed) --
+  - target:
+      kind: Ingress
+      name: dashboard
+      namespace: drone-demo
+    patch: |
+      - op: replace
+        path: /spec/tls/0/hosts/0
+        value: "mwc-dev.adaptivecloudlab.com"
+      - op: replace
+        path: /spec/rules/0/host
+        value: "mwc-dev.adaptivecloudlab.com"
+
+  # -- TLS Certificate DNS names --
+  - target:
+      kind: Certificate
+      name: drone-demo-tls
+      namespace: drone-demo
+    patch: |
+      - op: replace
+        path: /spec/dnsNames
+        value:
+          - "mwc-dev.adaptivecloudlab.com"
+          - "*.mwc-dev.adaptivecloudlab.com"
+
+  # -- MetalLB: suspend on cloud AKS (uses Azure LB instead) --
+  - target:
+      kind: IPAddressPool
+      name: service-pool
+      namespace: kube-system
+    patch: |
+      $patch: delete
+      apiVersion: metallb.io/v1beta1
+      kind: IPAddressPool
+      metadata:
+        name: service-pool
+        namespace: kube-system
+
+  - target:
+      kind: L2Advertisement
+      name: service-pool-advertisement
+      namespace: kube-system
+    patch: |
+      $patch: delete
+      apiVersion: metallb.io/v1beta1
+      kind: L2Advertisement
+      metadata:
+        name: service-pool-advertisement
+        namespace: kube-system
+
+  # -- Foundry Local: suspend in dev (no GPU / edge hardware) --
+  - target:
+      kind: Namespace
+      name: foundry-local
+    patch: |
+      $patch: delete
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: foundry-local
+
+  - target:
+      kind: Model
+      name: phi-4-mini
+      namespace: foundry-local
+    patch: |
+      $patch: delete
+      apiVersion: foundrylocal.azure.com/v1
+      kind: Model
+      metadata:
+        name: phi-4-mini
+        namespace: foundry-local
+
+  - target:
+      kind: ModelDeployment
+      name: phi-4-deployment
+      namespace: foundry-local
+    patch: |
+      $patch: delete
+      apiVersion: foundrylocal.azure.com/v1
+      kind: ModelDeployment
+      metadata:
+        name: phi-4-deployment
+        namespace: foundry-local
+
+  # -- kube-proxy-watchdog: not needed on cloud AKS --
+  - target:
+      kind: DaemonSet
+      name: kube-proxy-watchdog
+      namespace: cluster-watchdog
+    patch: |
+      $patch: delete
+      apiVersion: apps/v1
+      kind: DaemonSet
+      metadata:
+        name: kube-proxy-watchdog
+        namespace: cluster-watchdog
