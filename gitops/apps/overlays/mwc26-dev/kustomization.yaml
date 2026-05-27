@@ -1,7 +1,8 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+# Dev cluster: only drone-demo (no MetalLB, Foundry, or watchdog)
 resources:
-  - ../../base
+  - ../../base/drone-demo
 patches:
   # -- Drone Demo ConfigMap: Dev-specific values --
   - target:
@@ -34,7 +35,7 @@ patches:
         path: /data/MAP_ZOOM
         value: "13"
 
-  # -- Ingress: use ClusterIP only in dev (no external LB needed) --
+  # -- Ingress: dev hostname --
   - target:
       kind: Ingress
       name: dashboard
@@ -58,76 +59,3 @@ patches:
         value:
           - "mwc-dev.adaptivecloudlab.com"
           - "*.mwc-dev.adaptivecloudlab.com"
-
-  # -- MetalLB: suspend on cloud AKS (uses Azure LB instead) --
-  - target:
-      kind: IPAddressPool
-      name: service-pool
-      namespace: kube-system
-    patch: |
-      $patch: delete
-      apiVersion: metallb.io/v1beta1
-      kind: IPAddressPool
-      metadata:
-        name: service-pool
-        namespace: kube-system
-
-  - target:
-      kind: L2Advertisement
-      name: service-pool-advertisement
-      namespace: kube-system
-    patch: |
-      $patch: delete
-      apiVersion: metallb.io/v1beta1
-      kind: L2Advertisement
-      metadata:
-        name: service-pool-advertisement
-        namespace: kube-system
-
-  # -- Foundry Local: suspend in dev (no GPU / edge hardware) --
-  - target:
-      kind: Namespace
-      name: foundry-local
-    patch: |
-      $patch: delete
-      apiVersion: v1
-      kind: Namespace
-      metadata:
-        name: foundry-local
-
-  - target:
-      kind: Model
-      name: phi-4-mini
-      namespace: foundry-local
-    patch: |
-      $patch: delete
-      apiVersion: foundrylocal.azure.com/v1
-      kind: Model
-      metadata:
-        name: phi-4-mini
-        namespace: foundry-local
-
-  - target:
-      kind: ModelDeployment
-      name: phi-4-deployment
-      namespace: foundry-local
-    patch: |
-      $patch: delete
-      apiVersion: foundrylocal.azure.com/v1
-      kind: ModelDeployment
-      metadata:
-        name: phi-4-deployment
-        namespace: foundry-local
-
-  # -- kube-proxy-watchdog: not needed on cloud AKS --
-  - target:
-      kind: DaemonSet
-      name: kube-proxy-watchdog
-      namespace: cluster-watchdog
-    patch: |
-      $patch: delete
-      apiVersion: apps/v1
-      kind: DaemonSet
-      metadata:
-        name: kube-proxy-watchdog
-        namespace: cluster-watchdog

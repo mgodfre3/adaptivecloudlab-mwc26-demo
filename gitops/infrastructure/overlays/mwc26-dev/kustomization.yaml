@@ -108,11 +108,19 @@ patches:
             enabled: false
           kubeEtcd:
             enabled: false
+  # Cloud AKS: ingress-nginx uses ClusterIP (no external LB on private cluster)
+  - target:
+      kind: HelmRelease
+      name: ingress-nginx
+    patch: |
+      - op: replace
+        path: /spec/values/controller/service/type
+        value: ClusterIP
   # Cloud AKS has no GPU nodes — disable DCGM exporter
   - target:
       kind: HelmRelease
       name: dcgm-exporter
     patch: |
-      - op: replace
+      - op: add
         path: /spec/suspend
         value: true
