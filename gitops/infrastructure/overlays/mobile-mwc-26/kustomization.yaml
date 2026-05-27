@@ -8,7 +8,7 @@ patches:
   - target:
       kind: ConfigMap
       name: monitoring-values
-      namespace: monitoring
+      namespace: flux-system
     patch: |
       - op: replace
         path: /data/values.yaml
