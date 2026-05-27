@@ -124,6 +124,14 @@ patches:
             enabled: false
           kubeEtcd:
             enabled: false
+  # Pin ingress-nginx to original MetalLB IP so DNS stays valid
+  - target:
+     kind: HelmRelease
+     name: ingress-nginx
+   patch: |
+     - op: add
+       path: /spec/values/controller/service/loadBalancerIP
+       value: "172.21.229.180"
   # DCGM node selector for PDX GPU pool
   - target:
       kind: HelmRelease
