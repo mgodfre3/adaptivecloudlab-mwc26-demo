@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: simulator
+  namespace: drone-demo
+  labels:
+    app: simulator
+    app.kubernetes.io/part-of: mwc26-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: simulator
+  template:
+    metadata:
+      labels:
+        app: simulator
+    spec:
+      containers:
+        - name: simulator
+          image: acxcontregwus2-c6chcgfjardafsb5.azurecr.io/drone-demo/simulator:latest
+          envFrom:
+            - configMapRef:
+                name: drone-demo-config
+            - secretRef:
+                name: drone-demo-secrets
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+      imagePullSecrets:
+        - name: acr-pull-secret

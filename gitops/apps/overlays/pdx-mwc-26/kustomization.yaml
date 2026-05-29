@@ -1,0 +1,71 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+patches:
+  # -- Drone Demo ConfigMap: PDX-specific values --
+  - target:
+      kind: ConfigMap
+      name: drone-demo-config
+      namespace: drone-demo
+    patch: |
+      - op: replace
+        path: /data/FLASK_SECRET_KEY
+        value: "mwc26-demo-dashboard"
+      - op: replace
+        path: /data/IOT_HUB_NAME
+        value: "pdx-iothub"
+      - op: replace
+        path: /data/MAP_LOCATION_NAME
+        value: "Denver, CO"
+      - op: replace
+        path: /data/MAP_CENTER_LAT
+        value: "39.7484"
+      - op: replace
+        path: /data/MAP_CENTER_LON
+        value: "-104.9951"
+      - op: replace
+        path: /data/MAP_BASE_LAT
+        value: "39.7437"
+      - op: replace
+        path: /data/MAP_BASE_LON
+        value: "-104.9916"
+      - op: replace
+        path: /data/MAP_ZOOM
+        value: "13"
+
+  # -- Ingress hostname --
+  - target:
+      kind: Ingress
+      name: dashboard
+      namespace: drone-demo
+    patch: |
+      - op: replace
+        path: /spec/tls/0/hosts/0
+        value: "mwc.adaptivecloudlab.com"
+      - op: replace
+        path: /spec/rules/0/host
+        value: "mwc.adaptivecloudlab.com"
+
+  # -- TLS Certificate DNS names --
+  - target:
+      kind: Certificate
+      name: drone-demo-tls
+      namespace: drone-demo
+    patch: |
+      - op: replace
+        path: /spec/dnsNames
+        value:
+          - "adaptivecloudlab.com"
+          - "*.adaptivecloudlab.com"
+
+  # -- MetalLB IP range --
+  - target:
+      kind: IPAddressPool
+      name: service-pool
+      namespace: kube-system
+    patch: |
+      - op: replace
+        path: /spec/addresses
+        value:
+          - "172.21.229.180-172.21.229.185"

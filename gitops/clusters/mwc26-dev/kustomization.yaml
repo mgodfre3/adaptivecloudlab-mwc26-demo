@@ -1,0 +1,7 @@
+# Cluster entry point for mwc26-dev (Cloud AKS — Dev/Staging)
+# Flux watches this directory and reconciles infrastructure + apps
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../infrastructure/overlays/mwc26-dev
+  - ../../apps/overlays/mwc26-dev

@@ -1,0 +1,239 @@
+# =============================================================================
+#  kube-proxy Watchdog — Self-Healing DaemonSet
+#  Detects broken kube-proxy iptables and auto-restarts affected pods
+# =============================================================================
+#
+#  Problem: kube-proxy iptables rules can silently break, causing ClusterIP
+#  and LoadBalancer VIP routing to fail. New pods can't start (Calico CNI
+#  timeout), and existing services like the ingress become unreachable.
+#
+#  Solution: A lightweight DaemonSet (hostNetwork: true) that probes the
+#  kubernetes ClusterIP from the host network stack. On consecutive failures
+#  it deletes the local kube-proxy pod, forcing the DaemonSet controller to
+#  recreate it with fresh iptables rules.
+#
+#  Usage:
+#    kubectl apply -f k8s/kube-proxy-watchdog.yaml
+#
+# =============================================================================
+
+# ── Namespace ────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cluster-watchdog
+  labels:
+    app.kubernetes.io/part-of: mwc26-demo
+
+---
+# ── ServiceAccount ───────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kube-proxy-watchdog
+  namespace: cluster-watchdog
+
+---
+# ── ClusterRole — minimal permissions to list/delete kube-proxy pods ─────────
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kube-proxy-watchdog
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "delete"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get"]
+
+---
+# ── ClusterRoleBinding ───────────────────────────────────────────────────────
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kube-proxy-watchdog
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kube-proxy-watchdog
+subjects:
+  - kind: ServiceAccount
+    name: kube-proxy-watchdog
+    namespace: cluster-watchdog
+
+---
+# ── ConfigMap — watchdog script ──────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: watchdog-script
+  namespace: cluster-watchdog
+data:
+  watchdog.sh: |
+    #!/bin/sh
+    set -eu
+
+    # ── Configuration (override via env) ──────────────────────────────────
+    PROBE_TARGET="${PROBE_TARGET:-10.96.0.1:443}"
+    PROBE_INTERVAL="${PROBE_INTERVAL:-30}"
+    PROBE_TIMEOUT="${PROBE_TIMEOUT:-5}"
+    FAILURE_THRESHOLD="${FAILURE_THRESHOLD:-3}"
+    COOLDOWN_SECONDS="${COOLDOWN_SECONDS:-300}"
+
+    APISERVER="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}"
+    TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+    CACERT=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    NODE_NAME="${NODE_NAME}"
+
+    consecutive_failures=0
+    last_restart_time=0
+
+    log() {
+      echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') [watchdog] [$NODE_NAME] $*"
+    }
+
+    # Probe the kubernetes ClusterIP from the host network stack.
+    # This is the exact path that breaks when kube-proxy iptables go stale.
+    probe_clusterip() {
+      if wget -q -O /dev/null --timeout="$PROBE_TIMEOUT" \
+           "https://${PROBE_TARGET}" --no-check-certificate 2>/dev/null; then
+        return 0
+      fi
+      # wget may return non-zero for TLS errors but TCP connected — that's OK
+      # We only care about TCP-level reachability, so also try a raw connect
+      if timeout "$PROBE_TIMEOUT" sh -c \
+           "cat < /dev/null > /dev/tcp/${PROBE_TARGET%:*}/${PROBE_TARGET#*:}" 2>/dev/null; then
+        return 0
+      fi
+      # Last resort: use nc if available
+      if command -v nc >/dev/null 2>&1; then
+        if nc -z -w "$PROBE_TIMEOUT" "${PROBE_TARGET%:*}" "${PROBE_TARGET#*:}" 2>/dev/null; then
+          return 0
+        fi
+      fi
+      return 1
+    }
+
+    # Find and delete the kube-proxy pod running on this node
+    restart_local_kube_proxy() {
+      log "ACTION: Restarting kube-proxy on this node"
+
+      # Find kube-proxy pod on this node
+      pod_name=$(wget -q -O - \
+        --header="Authorization: Bearer ${TOKEN}" \
+        --ca-certificate="$CACERT" \
+        "${APISERVER}/api/v1/namespaces/kube-system/pods?labelSelector=k8s-app%3Dkube-proxy&fieldSelector=spec.nodeName%3D${NODE_NAME}" \
+        2>/dev/null | sed -n 's/.*"name": *"\(kube-proxy-[^"]*\)".*/\1/p' | head -1)
+
+      if [ -z "$pod_name" ]; then
+        log "WARNING: Could not find kube-proxy pod on node ${NODE_NAME}"
+        return 1
+      fi
+
+      log "Deleting pod ${pod_name} in kube-system"
+      wget -q -O /dev/null \
+        --method=DELETE \
+        --header="Authorization: Bearer ${TOKEN}" \
+        --ca-certificate="$CACERT" \
+        "${APISERVER}/api/v1/namespaces/kube-system/pods/${pod_name}" \
+        2>/dev/null || true
+
+      log "kube-proxy pod deleted — DaemonSet will recreate it"
+    }
+
+    # ── Main loop ─────────────────────────────────────────────────────────
+    log "Starting watchdog (probe=${PROBE_TARGET}, interval=${PROBE_INTERVAL}s, threshold=${FAILURE_THRESHOLD})"
+
+    while true; do
+      if probe_clusterip; then
+        if [ "$consecutive_failures" -gt 0 ]; then
+          log "RECOVERED after ${consecutive_failures} failure(s)"
+        fi
+        consecutive_failures=0
+      else
+        consecutive_failures=$((consecutive_failures + 1))
+        log "PROBE FAILED (${consecutive_failures}/${FAILURE_THRESHOLD})"
+
+        if [ "$consecutive_failures" -ge "$FAILURE_THRESHOLD" ]; then
+          now=$(date +%s)
+          elapsed=$((now - last_restart_time))
+
+          if [ "$elapsed" -ge "$COOLDOWN_SECONDS" ]; then
+            restart_local_kube_proxy
+            last_restart_time=$now
+            consecutive_failures=0
+            # Extra wait for kube-proxy to sync iptables
+            log "Waiting 60s for kube-proxy to resync iptables..."
+            sleep 60
+          else
+            remaining=$((COOLDOWN_SECONDS - elapsed))
+            log "COOLDOWN: Skipping restart (${remaining}s remaining)"
+          fi
+        fi
+      fi
+
+      sleep "$PROBE_INTERVAL"
+    done
+
+---
+# ── DaemonSet ────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: kube-proxy-watchdog
+  namespace: cluster-watchdog
+  labels:
+    app: kube-proxy-watchdog
+    app.kubernetes.io/part-of: mwc26-demo
+spec:
+  selector:
+    matchLabels:
+      app: kube-proxy-watchdog
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: "100%"
+  template:
+    metadata:
+      labels:
+        app: kube-proxy-watchdog
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      serviceAccountName: kube-proxy-watchdog
+      tolerations:
+        - operator: Exists
+      nodeSelector:
+        kubernetes.io/os: linux
+      containers:
+        - name: watchdog
+          image: busybox:1.36
+          command: ["sh", "/scripts/watchdog.sh"]
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: PROBE_INTERVAL
+              value: "30"
+            - name: FAILURE_THRESHOLD
+              value: "3"
+            - name: COOLDOWN_SECONDS
+              value: "300"
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+      volumes:
+        - name: scripts
+          configMap:
+            name: watchdog-script
+            defaultMode: 0755

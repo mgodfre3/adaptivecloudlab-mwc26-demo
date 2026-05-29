@@ -1,0 +1,18 @@
+# MetalLB IP Address Pool — address range patched per-cluster
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: service-pool
+  namespace: kube-system
+spec:
+  addresses:
+    - 172.21.229.180-172.21.229.185
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: service-l2
+  namespace: kube-system
+spec:
+  ipAddressPools:
+    - service-pool

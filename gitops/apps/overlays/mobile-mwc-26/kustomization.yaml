@@ -1,0 +1,90 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+patches:
+  # -- Drone Demo ConfigMap: Mobile-specific values --
+  - target:
+      kind: ConfigMap
+      name: drone-demo-config
+      namespace: drone-demo
+    patch: |
+      - op: replace
+        path: /data/FLASK_SECRET_KEY
+        value: "mwc26-demo-dashboard-mobile"
+      - op: replace
+        path: /data/IOT_HUB_NAME
+        value: "mobile-iothub"
+      - op: replace
+        path: /data/MAP_LOCATION_NAME
+        value: "Mobile Demo"
+      - op: replace
+        path: /data/MAP_CENTER_LAT
+        value: "39.7484"
+      - op: replace
+        path: /data/MAP_CENTER_LON
+        value: "-104.9951"
+      - op: replace
+        path: /data/MAP_BASE_LAT
+        value: "39.7437"
+      - op: replace
+        path: /data/MAP_BASE_LON
+        value: "-104.9916"
+      - op: replace
+        path: /data/MAP_ZOOM
+        value: "13"
+
+  # -- Ingress hostname --
+  - target:
+      kind: Ingress
+      name: dashboard
+      namespace: drone-demo
+    patch: |
+      - op: replace
+        path: /spec/tls/0/hosts/0
+        value: "mwc.acx.mobile"
+      - op: replace
+        path: /spec/rules/0/host
+        value: "mwc.acx.mobile"
+
+  # -- TLS Certificate DNS names --
+  - target:
+      kind: Certificate
+      name: drone-demo-tls
+      namespace: drone-demo
+    patch: |
+      - op: replace
+        path: /spec/dnsNames
+        value:
+          - "acx.mobile"
+          - "*.acx.mobile"
+
+  # -- MetalLB IP range --
+  - target:
+      kind: IPAddressPool
+      name: service-pool
+      namespace: kube-system
+    patch: |
+      - op: replace
+        path: /spec/addresses
+        value:
+          - "172.25.10.241-172.25.10.250"
+
+  # -- Foundry Local: smaller resource footprint for mobile --
+  - target:
+      kind: ModelDeployment
+      name: phi-4-deployment
+      namespace: foundry-local
+    patch: |
+      - op: replace
+        path: /spec/resources/requests/cpu
+        value: "500m"
+      - op: replace
+        path: /spec/resources/requests/memory
+        value: "2Gi"
+      - op: replace
+        path: /spec/resources/limits/cpu
+        value: "2"
+      - op: replace
+        path: /spec/resources/limits/memory
+        value: "3Gi"

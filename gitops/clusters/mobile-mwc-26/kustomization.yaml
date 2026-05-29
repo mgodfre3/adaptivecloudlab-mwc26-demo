@@ -1,0 +1,7 @@
+# Cluster entry point for mobile-mwc-26
+# Flux watches this directory and reconciles infrastructure + apps
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../infrastructure/overlays/mobile-mwc-26
+  - ../../apps/overlays/mobile-mwc-26

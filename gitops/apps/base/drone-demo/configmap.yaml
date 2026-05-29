@@ -1,0 +1,28 @@
+# Base ConfigMap — cluster overlays patch in the actual values
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: drone-demo-config
+  namespace: drone-demo
+data:
+  DEMO_MODE: "true"
+  DASHBOARD_PORT: "5000"
+  DRONE_COUNT: "5"
+  EVENTHUB_CONSUMER_GROUP: "drone-telemetry"
+  FLASK_SECRET_KEY: "changeme"
+  EDGE_AI_ENABLED: "true"
+  EDGE_AI_ENDPOINT: "https://phi-4-deployment.pdx-foundry-mdl.svc:5000"
+  EDGE_AI_MODEL: "Phi-4-mini-instruct-cuda-gpu:5"
+  EDGE_AI_INTERVAL: "15"
+  IOT_HUB_NAME: "changeme"
+  SEND_INTERVAL_SECONDS: "5"
+  DATA_MODE: "cloud"
+  MQTT_BROKER_HOST: "aio-broker-insecure.azure-iot-operations.svc"
+  MQTT_BROKER_PORT: "1883"
+  MQTT_TOPIC_PREFIX: "drone/telemetry"
+  MAP_LOCATION_NAME: "Denver, CO"
+  MAP_CENTER_LAT: "39.7484"
+  MAP_CENTER_LON: "-104.9951"
+  MAP_BASE_LAT: "39.7437"
+  MAP_BASE_LON: "-104.9916"
+  MAP_ZOOM: "13"

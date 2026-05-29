@@ -1,0 +1,126 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+patches:
+  # Cloud AKS: Grafana root_url for dev
+  - target:
+      kind: ConfigMap
+      name: monitoring-values
+      namespace: flux-system
+    patch: |
+      - op: replace
+        path: /data/values.yaml
+        value: |
+          grafana:
+            enabled: true
+            adminUser: admin
+            adminPassword: MWC26-Demo!
+            persistence:
+              enabled: true
+              size: 5Gi
+            service:
+              type: ClusterIP
+              port: 80
+            sidecar:
+              dashboards:
+                enabled: true
+                label: grafana_dashboard
+                labelValue: "1"
+                folderAnnotation: grafana_folder
+                provider:
+                  foldersFromFilesStructure: true
+              datasources:
+                enabled: true
+            additionalDataSources: []
+            grafana.ini:
+              server:
+                root_url: http://localhost:3000
+                serve_from_sub_path: false
+              auth.anonymous:
+                enabled: true
+                org_role: Viewer
+              security:
+                allow_embedding: true
+            resources:
+              requests:
+                cpu: 100m
+                memory: 256Mi
+              limits:
+                cpu: 500m
+                memory: 512Mi
+          prometheus:
+            prometheusSpec:
+              retention: 3d
+              resources:
+                requests:
+                  cpu: 200m
+                  memory: 512Mi
+                limits:
+                  cpu: "1"
+                  memory: 2Gi
+              storageSpec:
+                volumeClaimTemplate:
+                  spec:
+                    accessModes: ["ReadWriteOnce"]
+                    resources:
+                      requests:
+                        storage: 10Gi
+          alertmanager:
+            enabled: false
+          nodeExporter:
+            enabled: true
+          kubeStateMetrics:
+            enabled: true
+          defaultRules:
+            create: true
+            rules:
+              alertmanager: false
+              etcd: false
+              configReloaders: false
+              general: true
+              k8sContainerCpuUsageSecondsTotal: true
+              k8sContainerMemoryCache: true
+              k8sContainerMemoryRss: true
+              k8sContainerMemorySwap: false
+              k8sContainerResource: true
+              k8sPodOwner: true
+              kubeApiserverAvailability: false
+              kubeApiserverBurnrate: false
+              kubeApiserverHistogram: false
+              kubeApiserverSlos: false
+              kubeControllerManager: false
+              kubeProxy: false
+              kubeSchedulerAlerting: false
+              kubeSchedulerRecording: false
+              kubeStateMetrics: true
+              kubelet: true
+              node: true
+              nodeExporterAlerting: false
+              nodeExporterRecording: true
+              prometheus: true
+              prometheusOperator: false
+          kubeControllerManager:
+            enabled: false
+          kubeScheduler:
+            enabled: false
+          kubeProxy:
+            enabled: false
+          kubeEtcd:
+            enabled: false
+  # Cloud AKS: ingress-nginx uses ClusterIP (no external LB on private cluster)
+  - target:
+      kind: HelmRelease
+      name: ingress-nginx
+    patch: |
+      - op: replace
+        path: /spec/values/controller/service/type
+        value: ClusterIP
+  # Cloud AKS has no GPU nodes — disable DCGM exporter
+  - target:
+      kind: HelmRelease
+      name: dcgm-exporter
+    patch: |
+      - op: add
+        path: /spec/suspend
+        value: true
