@@ -1,0 +1,125 @@
+name: Foundry Local → Arc Extension Cutover
+
+# Trigger manually from any device: `gh workflow run foundry-extension-cutover.yml -f cluster=vi-portland -f stage=prep`
+# Designed so you can close the laptop and trigger from a phone if needed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      cluster:
+        description: 'Target AKS Arc cluster'
+        required: true
+        type: choice
+        options:
+          - vi-portland
+          - pdx-mwc-26
+        default: vi-portland
+      stage:
+        description: 'Cutover stage'
+        required: true
+        type: choice
+        options:
+          - prep            # backup + helm-cleanup + cert-manager (safe, no app reg needed)
+          - foundry         # install Microsoft.Foundry (requires foundry_client_id)
+          - apply-models    # re-apply Model/ModelDeployment CRs in foundry-local-operator
+          - verify          # status only
+          - full            # everything end-to-end (requires foundry_client_id)
+        default: prep
+      foundry_client_id:
+        description: 'Entra app reg client ID (required for foundry/full stages; falls back to FOUNDRY_APP_CLIENT_ID secret)'
+        required: false
+        type: string
+      dry_run:
+        description: 'Print commands without executing'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  id-token: write   # OIDC federation to Azure
+  contents: read
+
+jobs:
+  cutover:
+    name: ${{ inputs.cluster }} / ${{ inputs.stage }}
+    runs-on: ubuntu-latest
+    environment: foundry-cutover   # gates with manual approval if you configure it in Settings → Environments
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Az login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install az extensions
+        shell: bash
+        run: |
+          az extension add --name connectedk8s   --upgrade --yes
+          az extension add --name k8s-extension  --upgrade --yes
+          az extension add --name aksarc         --upgrade --yes || true
+
+      - name: Install kubectl + helm
+        shell: bash
+        run: |
+          curl -sSLo /usr/local/bin/kubectl https://dl.k8s.io/release/$(curl -sL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl
+          chmod +x /usr/local/bin/kubectl
+          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+      - name: Install PowerShell
+        shell: bash
+        run: |
+          # PowerShell 7+ on ubuntu-latest is preinstalled, but make sure
+          pwsh --version || (sudo apt-get update && sudo apt-get install -y powershell)
+
+      - name: Run cutover stage
+        shell: pwsh
+        env:
+          FOUNDRY_APP_CLIENT_ID: ${{ inputs.foundry_client_id || secrets.FOUNDRY_APP_CLIENT_ID }}
+        run: |
+          $dry = if ('${{ inputs.dry_run }}' -eq 'true') { '-DryRun' } else { '' }
+          ./scripts/08-migrate-foundry-to-extension.ps1 `
+            -ClusterEnvFile ./config/${{ inputs.cluster }}.env `
+            -Stage ${{ inputs.stage }} `
+            $dry
+
+      - name: Upload CR backup (if produced)
+        if: always() && (inputs.stage == 'prep' || inputs.stage == 'full')
+        uses: actions/upload-artifact@v4
+        with:
+          name: foundry-cr-backup-${{ inputs.cluster }}-${{ github.run_id }}
+          path: foundry-backup-*.yaml
+          if-no-files-found: ignore
+          retention-days: 30
+
+# ─────────────────────────────────────────────────────────────────────────────
+# One-time setup (~10 min, do once per repo):
+#
+#   1. Create or reuse an Azure AD app registration with these federated credentials:
+#        Issuer:  https://token.actions.githubusercontent.com
+#        Subject: repo:mgodfre3/adaptivecloudlab-mwc26-demo:environment:foundry-cutover
+#        Audience: api://AzureADTokenExchange
+#      RBAC the app at the resource group `pdx-rg` with:
+#        - Azure Kubernetes Service Arc Contributor Role
+#        - Kubernetes Extension Contributor (or Contributor on the cluster RG)
+#
+#   2. Add repo secrets (Settings → Secrets and variables → Actions):
+#        AZURE_CLIENT_ID         (app registration appId)
+#        AZURE_TENANT_ID         72f988bf-86f1-41af-91ab-2d7cd011db47
+#        AZURE_SUBSCRIPTION_ID   fbaf508b-cb61-4383-9cda-a42bfa0c7bc9
+#        FOUNDRY_APP_CLIENT_ID   (the Foundry-operator app reg client ID; can be same
+#                                 app as AZURE_CLIENT_ID or a separate one)
+#
+#   3. (Optional) Settings → Environments → New environment `foundry-cutover`
+#      → require manual approval. This gates each cutover run on a human OK.
+#
+# Then trigger from any device:
+#   gh workflow run foundry-extension-cutover.yml -f cluster=vi-portland -f stage=prep
+#   gh workflow run foundry-extension-cutover.yml -f cluster=vi-portland -f stage=foundry -f foundry_client_id=<guid>
+#   gh workflow run foundry-extension-cutover.yml -f cluster=vi-portland -f stage=apply-models
+#   gh workflow run foundry-extension-cutover.yml -f cluster=vi-portland -f stage=verify
+# Then repeat for pdx-mwc-26 after the pilot is green.
+# ─────────────────────────────────────────────────────────────────────────────
