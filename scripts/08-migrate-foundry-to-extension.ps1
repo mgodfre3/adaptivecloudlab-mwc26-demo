@@ -131,6 +131,33 @@
        `kubectl exec ... -c inference -- curl http://localhost:5000/v1/models`
        which lists the loaded model. Chat completions also require Bearer
        tokens even on localhost.
+
+    8. CO-RESIDENT videoindexer EXTENSION (vi-portland pattern) — when Foundry
+       runs on the same GPU node as the Microsoft.VideoIndexer extension, two
+       chart defaults will cause videoindexer Failed state and must be overridden
+       via `az k8s-extension update`:
+
+         storage.indexing.size=50Gi
+           Chart default is 500Gi; PVC is provisioned at 50Gi on existing
+           clusters. Longhorn refuses to expand if disk free < requested delta.
+           Pinning to current size prevents helm-upgrade from attempting
+           expansion. Template: vi-pvc.yaml -> _storage.tpl helper.
+
+         scaling.webapi.minReplicaCount=1
+           Chart default is 3. Each webapi pod requests 500m CPU + 4Gi RAM.
+           With Foundry co-resident, the cluster only fits 1 webapi replica.
+           HPA min=1 stops creating perpetually-Pending pods. Template:
+           webapp-hpa.yaml.
+
+       Apply via:
+         az k8s-extension update --name videoindexer -c <cluster> -g <rg> \
+           --cluster-type connectedClusters --yes \
+           --config storage.indexing.size=50Gi \
+           --config scaling.webapi.minReplicaCount=1
+
+       Discovery pattern (reusable for any chart bug): pull the helm release
+       secret, gzip-decode the .data.release blob, inspect chart.templates +
+       chart.values to find which values are actually wired vs hardcoded.
 #>
 
 [CmdletBinding()]
