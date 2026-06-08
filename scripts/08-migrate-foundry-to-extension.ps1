@@ -78,19 +78,32 @@
        if the CR is in the same namespace as the operator's release-namespace.
        Putting CRs in a separate namespace causes silent FailedMount loops.
 
-    3. RESOURCE FOOTPRINT — the extension's `model-store` deployment HARDCODES
-       registry container cpu:1 + nginx-sidecar cpu:2 = 3 CPU. The Helm values
-       `modelStore.registry.resources.requests.cpu` and
-       `modelStore.nginxSidecar.resources.requests.cpu` are DEFINED in
-       values.yaml but the template DOESN'T reference them, so passing them via
-       `az k8s-extension --config` is silently ignored. Same problem for the api
-       container's `WORKERS=4` env (uvicorn workers recycle every ~1s,
-       CrashLoopBackOff). The extension agent reverts any kubectl patch on each
-       helm-upgrade reconcile (~2-10 min).
+    3. RESOURCE FOOTPRINT & FAILED EXTENSION STATE — the extension's `model-store`
+       SUBCHART deployment HARDCODES registry container cpu:1 + nginx-sidecar
+       cpu:2 = 3 CPU. Helm values `modelStore.registry.resources.requests.cpu`
+       and `modelStore.nginxSidecar.resources.requests.cpu` are DEFINED in
+       values.yaml but the subchart template DOES NOT reference them — passing
+       via `az k8s-extension --config` is silently ignored. (Upstream chart bug.)
 
-       WORKAROUND: deploy k8s/foundry-patch-guardian.yaml — a CronJob that
-       re-patches WORKERS=1 + model-store cpu (200m/100m) every 2 minutes.
-       Remove when upstream chart fixes the values wiring.
+       In contrast, `api.config.server.workers` IS a real, wired key
+       (api-deployment.yaml line ~170). This script now passes
+       `--config api.config.server.workers=1` at create time, eliminating the
+       WORKERS=4 → uvicorn-recycle → CrashLoopBackOff cycle at the chart level.
+
+       The model-store hardcoding still requires the patch-guardian CronJob to
+       hold cpu:200m/100m so it schedules on undersized GPU nodes (e.g.,
+       Standard_NC4_A2 with 4 CPU has ~2.4 CPU free — can't fit 3 CPU request).
+       The default RollingUpdate strategy on model-store also hits PVC
+       Multi-Attach (RWO PVC held by old pod blocks new pod) on every helm
+       reconcile, so this script now patches strategy=Recreate to avoid that.
+
+       Even with all of the above, the extension agent reconciles every ~5-10
+       min and the helm-upgrade WILL appear Failed if the guardian's patched
+       model-store deployment hasn't been observed Ready within the helm
+       timeout window. Once the guardian runs after a reconcile, the extension
+       returns to Succeeded. Future remediation: scale GPU node to NC8+ (8 CPU)
+       to fit upstream chart defaults, OR upstream fix to wire modelStore
+       resource values. Track upstream issue before removing the guardian.
 
     4. INFERENCE POD SCHEDULING — the inference pod has 6 containers
        (model-store-pull init + otel-sidecar + msi-adapter + inference +
@@ -320,7 +333,8 @@ try {
                     --auto-upgrade-minor-version true `
                     --release-train stable `
                     --config entraAuth.tenantId=$TenantId `
-                    --config entraAuth.clientId=$FoundryClientId
+                    --config entraAuth.clientId=$FoundryClientId `
+                    --config api.config.server.workers=1
             }
             if (-not $DryRun) {
                 $state = & $azCmd k8s-extension show -g $rg --cluster-name $cluster `
@@ -347,8 +361,29 @@ try {
             kubectl apply -f $manifest
         }
 
-        # Guardian re-patches WORKERS=1 + model-store cpu reverted by extension agent.
-        # See header note #3 for details.
+        # Patch model-store Deployment strategy to Recreate (default RollingUpdate hits
+        # PVC Multi-Attach: old RWO pod blocks new pod on every helm reconcile).
+        # Wait for the Deployment to exist (extension agent creates it asynchronously),
+        # then patch. Idempotent.
+        Invoke-Step "patch model-store strategy=Recreate (avoid PVC Multi-Attach on reconciles)" {
+            $deadline = (Get-Date).AddMinutes(5)
+            while ((Get-Date) -lt $deadline) {
+                $exists = kubectl get deploy -n $newOpNs inference-operator-model-store --ignore-not-found -o name 2>$null
+                if ($exists) { break }
+                Start-Sleep -Seconds 10
+            }
+            if (-not $exists) {
+                Write-Warning '  model-store Deployment not present after 5min; skipping strategy patch'
+            } else {
+                kubectl patch deploy -n $newOpNs inference-operator-model-store --type=strategic `
+                    -p '{"spec":{"strategy":{"$retainKeys":["type"],"type":"Recreate"}}}'
+            }
+        }
+
+        # Guardian re-patches model-store cpu/mem (subchart hardcodes registry cpu:1 +
+        # nginx-sidecar cpu:2 — undersized GPU nodes can't schedule). WORKERS=1 is now
+        # set via extension --config so guardian's WORKERS branch is a defense-in-depth
+        # no-op. See header note #3 for details.
         Invoke-Step "kubectl apply -f $guardian (patch-revert workaround)" {
             kubectl apply -f $guardian
         }
