@@ -1,0 +1,103 @@
+# Workaround CronJob for Microsoft.Foundry Arc extension v0.260531.2.
+#
+# Two chart-values bugs in the public-preview extension cause the operator's api
+# and model-store deployments to be unhealthy or unschedulable on small AKS-Arc
+# clusters:
+#
+#   1. `api.config.server.workers` defaults to 4 → uvicorn workers recycle every
+#      ~1 sec → liveness probe SIGTERMs → CrashLoopBackOff. The env var WORKERS
+#      can be patched on the Deployment but the extension agent reverts it on
+#      each helm-upgrade reconcile (~ every 2-10 minutes).
+#
+#   2. The model-store deployment hardcodes registry container cpu:1 (1 full
+#      core) and nginx-sidecar cpu:2 (2 full cores). The Helm values
+#      `modelStore.registry.resources.requests.cpu` and
+#      `modelStore.nginxSidecar.resources.requests.cpu` are DEFINED in values.yaml
+#      but the template doesn't reference them — so `az k8s-extension --config`
+#      is silently ignored. On small clusters this pod can't schedule.
+#
+# This CronJob re-patches both every 2 minutes. Remove it when:
+#   - The extension exposes correct value keys, OR
+#   - You move to a larger cluster where the original requests fit.
+#
+# Image alpine/k8s is used because it has both /bin/sh and kubectl. The official
+# rancher/kubectl image is distroless and lacks /bin/sh.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: foundry-patch-guardian
+  namespace: foundry-local-operator
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: foundry-patch-guardian
+  namespace: foundry-local-operator
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get","patch","update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: foundry-patch-guardian
+  namespace: foundry-local-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: foundry-patch-guardian
+subjects:
+- kind: ServiceAccount
+  name: foundry-patch-guardian
+  namespace: foundry-local-operator
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: foundry-patch-guardian
+  namespace: foundry-local-operator
+spec:
+  schedule: "*/2 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 600
+      template:
+        spec:
+          serviceAccountName: foundry-patch-guardian
+          restartPolicy: Never
+          containers:
+          - name: patcher
+            image: alpine/k8s:1.30.0
+            command: ["/bin/sh","-c"]
+            args:
+            - |
+              set -e
+              CUR=$(kubectl get deploy inference-operator-api -n foundry-local-operator -o jsonpath='{range .spec.template.spec.containers[?(@.name=="api")].env[?(@.name=="WORKERS")]}{.value}{end}')
+              if [ "$CUR" != "1" ]; then
+                echo "Re-patching WORKERS (was '$CUR')"
+                kubectl set env deploy/inference-operator-api -n foundry-local-operator -c api WORKERS=1
+              fi
+              REG_CPU=$(kubectl get deploy inference-operator-model-store -n foundry-local-operator -o jsonpath='{.spec.template.spec.containers[?(@.name=="registry")].resources.requests.cpu}')
+              if [ "$REG_CPU" != "200m" ]; then
+                echo "Re-patching model-store cpu (registry was '$REG_CPU')"
+                kubectl patch deploy inference-operator-model-store -n foundry-local-operator --type=json -p='[
+                  {"op":"replace","path":"/spec/template/spec/containers/0/resources/requests/cpu","value":"200m"},
+                  {"op":"replace","path":"/spec/template/spec/containers/0/resources/limits/cpu","value":"500m"},
+                  {"op":"replace","path":"/spec/template/spec/containers/1/resources/requests/cpu","value":"100m"},
+                  {"op":"replace","path":"/spec/template/spec/containers/1/resources/limits/cpu","value":"500m"}
+                ]'
+              fi
+              echo "Guardian pass complete"
+            resources:
+              requests:
+                cpu: 20m
+                memory: 32Mi
+              limits:
+                cpu: 100m
+                memory: 64Mi

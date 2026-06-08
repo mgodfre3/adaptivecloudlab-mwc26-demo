@@ -4,24 +4,19 @@
 # OLD inferenceoperator@0.0.1-prp.5 Helm chart's CRD schema and will fail to
 # apply with strict-decoding errors against the new extension).
 #
-# Chain: StoreModel ─► (cache pod downloads artifact) ─► Model (auto-created by
-# operator) ─► ModelDeployment (refs Model by name).
+# Two valid approaches:
 #
-# Apply to the SAME namespace as the operator's release-namespace
-# (foundry-local-operator) so the operator resolves the Model ref. If you want
-# multi-tenant model namespaces, set spec.namespaces in the operator extension
-# config.
----
-apiVersion: foundrylocal.azure.com/v1
-kind: StoreModel
-metadata:
-  name: phi-4-mini
-  namespace: foundry-local-operator
-spec:
-  source: foundry-local         # foundry-local | foundry | huggingface | custom | azureml-foundrylocalonazurelocal
-  alias: phi-4-mini
-  compute: gpu                  # cpu | gpu
-  framework: onnx               # onnx | vllm
+#   A) Catalog ref (RECOMMENDED for built-in models) — let the operator
+#      auto-create StoreModel + Model from the foundry-local-catalog ConfigMap.
+#      Just write a ModelDeployment with `model.catalog.name`.
+#
+#   B) Manual StoreModel + Model — only needed for BYO custom OCI registry
+#      sources or when you want explicit control of variants.
+#
+# This file uses (A). CRs MUST be in the operator's release namespace
+# (foundry-local-operator) — the cache Job references the
+# `foundry-otel-sidecar-config` ConfigMap by name, which only exists in the
+# operator namespace.
 ---
 apiVersion: foundrylocal.azure.com/v1
 kind: ModelDeployment
@@ -29,14 +24,14 @@ metadata:
   name: phi-4-deployment
   namespace: foundry-local-operator
 spec:
-  displayName: Phi-4 Edge AI
   model:
-    ref: phi-4-mini             # name of the Model CR the operator creates from StoreModel above
-  compute: gpu                  # MUST match StoreModel.spec.compute
+    catalog:
+      name: phi-4-mini          # resolved from foundry-local-catalog ConfigMap
+      # version: latest         # optional, defaults to latest
+  compute: gpu                  # cpu | gpu
   workloadType: generative      # generative | predictive
   runtime: onnx-genai           # onnx-genai | vllm | maas
   replicas: 1
-  port: 5000
   resources:
     requests:
       cpu: "500m"
@@ -44,7 +39,7 @@ spec:
     limits:
       cpu: "2"
       memory: "3Gi"
-      gpu: 1                    # NOTE: schema uses bare `gpu`, NOT `nvidia.com/gpu`
+      gpu: 1                    # schema uses bare `gpu`, NOT `nvidia.com/gpu`
   # Optional: expose via ingress
   # endpoint:
   #   enabled: true

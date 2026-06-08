@@ -49,50 +49,75 @@
         -ClusterEnvFile ./config/pdx-mwc-26.env -Stage prep
 
 .NOTES
-    LESSONS LEARNED FROM vi-portland CUTOVER (2026-06-08):
+    LESSONS LEARNED FROM vi-portland CUTOVER (2026-06-08, COMPLETED SUCCESSFULLY):
 
-    1. NEW CRD SCHEMA -- the Microsoft.Foundry extension SHIPS DIFFERENT CRDs vs
-       the old `inferenceoperator@0.0.1-prp.5` Helm chart. The `apply-models`
-       stage in this script applies the OLD CRs from k8s/foundry-local.yaml and
-       will FAIL with strict-decoding errors. The new shape is:
+    1. NEW CRD SCHEMA — the Microsoft.Foundry extension ships DIFFERENT CRDs vs
+       the old `inferenceoperator@0.0.1-prp.5` Helm chart. The OLD
+       k8s/foundry-local.yaml + k8s/vi-foundry-local.yaml will FAIL with
+       strict-decoding errors. Use k8s/foundry-local-extension.yaml instead.
 
-         * StoreModel (NEW kind) -- declares the model SOURCE
-             spec: { source: foundry-local, alias: phi-4-mini, compute: gpu,
-                     framework: onnx }
-         * Model (RESHAPED) -- pure metadata; the operator creates it AFTER the
-           StoreModel cache pod finishes downloading
-         * ModelDeployment (RESHAPED) -- spec.authentication is REMOVED;
-           spec.resources.limits.gpu (NOT nvidia.com/gpu) for GPU; required:
-           model, workloadType, compute; new optional runtime: onnx-genai|vllm|maas
+       The shipping pattern for CATALOG (built-in) models is just a
+       ModelDeployment with `model.catalog.name: phi-4-mini` — the operator
+       auto-creates the StoreModel + Model behind the scenes. You do NOT need to
+       hand-author a StoreModel CR for catalog models.
 
-       See k8s/foundry-local-extension.yaml for a working new-schema template.
-       The apply-models stage in THIS script still uses the old manifests and
-       MUST be updated before re-running on pdx-mwc-26.
+       Key schema differences:
+         * `model.ref` (string) targets a hand-authored Model CR (BYO)
+         * `model.catalog.{name,version}` targets the foundry-local-catalog ConfigMap
+         * `model.custom` targets an OCI registry (BYO with credentials)
+         * `model.maas` proxies to a hosted MaaS endpoint
+         * `spec.compute` REQUIRED (cpu|gpu); MUST match StoreModel.compute
+         * `spec.workloadType` REQUIRED (generative|predictive)
+         * `spec.runtime` optional (onnx-genai|vllm|maas)
+         * `spec.resources.limits.gpu` — bare `gpu`, NOT `nvidia.com/gpu`
+         * `spec.authentication` REMOVED — auth handled by entra-sidecar
 
-    2. RESOURCE FOOTPRINT -- the new extension's model-store deployment requests
-       1 CPU (registry) + 2 CPU (nginx-sidecar) = 3 CPU. On capacity-constrained
-       clusters (vi-portland: 4 nodes ~4 CPU each, ~95% committed pre-migration)
-       Helm install times out because no node has 3 free CPU. Workarounds tried:
-         * `--config modelStore.resources.requests.cpu=...` -- IGNORED (wrong key)
-         * kubectl patch deployment after creation -- WORKS briefly, but the
-           extension agent re-runs `helm upgrade` and REVERTS the patch.
-       The correct fix requires finding the chart's actual values keys; until
-       then plan for >=3 free CPU and >=1Gi free mem on at least one worker.
+    2. CRs MUST LIVE IN THE OPERATOR'S NAMESPACE (`foundry-local-operator`). The
+       cache Job that downloads the model references ConfigMap
+       `foundry-otel-sidecar-config` by name without namespace — only resolves
+       if the CR is in the same namespace as the operator's release-namespace.
+       Putting CRs in a separate namespace causes silent FailedMount loops.
 
-    3. WORKERS=4 BUG in inference-operator-api image -- with WORKERS=4 the
-       uvicorn workers recycle every ~1s, liveness probe (curl /healthz) catches
-       the gap, SIGTERMs the container, CrashLoopBackOff forever. WORKERS=1
-       fixes it. Same caveat as #2: kubectl patch is reverted by the agent.
+    3. RESOURCE FOOTPRINT — the extension's `model-store` deployment HARDCODES
+       registry container cpu:1 + nginx-sidecar cpu:2 = 3 CPU. The Helm values
+       `modelStore.registry.resources.requests.cpu` and
+       `modelStore.nginxSidecar.resources.requests.cpu` are DEFINED in
+       values.yaml but the template DOESN'T reference them, so passing them via
+       `az k8s-extension --config` is silently ignored. Same problem for the api
+       container's `WORKERS=4` env (uvicorn workers recycle every ~1s,
+       CrashLoopBackOff). The extension agent reverts any kubectl patch on each
+       helm-upgrade reconcile (~2-10 min).
 
-    4. AKS-Admins MEMBERSHIP -- both pdx clusters have enableAzureRbac:false and
+       WORKAROUND: deploy k8s/foundry-patch-guardian.yaml — a CronJob that
+       re-patches WORKERS=1 + model-store cpu (200m/100m) every 2 minutes.
+       Remove when upstream chart fixes the values wiring.
+
+    4. INFERENCE POD SCHEDULING — the inference pod has 6 containers
+       (model-store-pull init + otel-sidecar + msi-adapter + inference +
+       nginx-sidecar + entra-sidecar) totalling ~2.75Gi memory / 1 CPU
+       effective request, AND requires `gpu: 1`. On a single-GPU node cluster,
+       the pod MUST schedule on that GPU node. Plan for >=3Gi free mem on the
+       GPU node BEFORE applying the ModelDeployment. On vi-portland we had to
+       evict inference-operator-api off the GPU node + scale down
+       video-indexer-completion + video-dashboard to make room.
+
+    5. AKS-Admins MEMBERSHIP — both pdx clusters have enableAzureRbac:false and
        gate kubectl access on AAD group `AKS-Admins` (094db372-f9b2-4477-937c-
        869b8cf2bb8a). The operator must be in this group OR have Arc-side admin
        added via `az role assignment create --role 'Azure Arc Kubernetes Cluster
        Admin'`. RBAC role alone is not sufficient on legacy-AAD clusters.
 
-    5. HELM RELEASE NAME -- the old chart release is `inferenceoperator` (one
+    6. HELM RELEASE NAME — the old chart release is `inferenceoperator` (one
        word), NOT `inference-operator`. The helm-cleanup stage already accounts
        for this; do not "correct" it.
+
+    7. API ENDPOINT REQUIRES ENTRA AUTH — the model server inside the pod is
+       reachable at http://localhost:5000 inside the inference container, but
+       all external traffic must go through nginx-sidecar:8443 (TLS) →
+       entra-sidecar (validates Bearer tokens). For smoke tests use
+       `kubectl exec ... -c inference -- curl http://localhost:5000/v1/models`
+       which lists the loaded model. Chat completions also require Bearer
+       tokens even on localhost.
 #>
 
 [CmdletBinding()]
@@ -310,29 +335,26 @@ try {
     if ($Stage -in @('apply-models','full')) {
         Write-Host ''; Write-Host '━━━ Stage: apply-models ━━━' -ForegroundColor Magenta
 
-        # Pick the right manifest based on cluster prefix
         $repoRoot = Split-Path $PSScriptRoot -Parent
-        $manifest = switch -Regex ($cluster) {
-            '^vi-'   { Join-Path $repoRoot 'k8s/vi-foundry-local.yaml' }
-            default  { Join-Path $repoRoot 'k8s/foundry-local.yaml' }
-        }
+        $manifest = Join-Path $repoRoot 'k8s/foundry-local-extension.yaml'
+        $guardian = Join-Path $repoRoot 'k8s/foundry-patch-guardian.yaml'
         if (-not (Test-Path $manifest)) { throw "Manifest not found: $manifest" }
+        if (-not (Test-Path $guardian)) { throw "Guardian not found: $guardian" }
         Write-Host "    Source manifest: $manifest" -ForegroundColor DarkGray
+        Write-Host "    Guardian:        $guardian" -ForegroundColor DarkGray
 
-        # Rewrite the namespace line-by-line (anchored end-of-line) to foundry-local-operator.
-        # Does NOT mutate the repo file — writes a temp copy.
-        $rendered = Get-Content $manifest | ForEach-Object {
-            $_ -replace '^(\s*namespace:\s*)foundry-local\s*$',    "`${1}$newOpNs" `
-               -replace '^(\s*namespace:\s*)vi-foundry-local\s*$', "`${1}$newOpNs"
+        Invoke-Step "kubectl apply -f $manifest" {
+            kubectl apply -f $manifest
         }
 
-        $tmpYaml = Join-Path ([System.IO.Path]::GetTempPath()) "foundry-$([Guid]::NewGuid()).yaml"
-        $rendered | Set-Content -Path $tmpYaml -Encoding UTF8
-
-        Invoke-Step "kubectl apply -f (rendered, namespace=$newOpNs)" {
-            kubectl apply -f $tmpYaml
+        # Guardian re-patches WORKERS=1 + model-store cpu reverted by extension agent.
+        # See header note #3 for details.
+        Invoke-Step "kubectl apply -f $guardian (patch-revert workaround)" {
+            kubectl apply -f $guardian
         }
-        if (-not $DryRun) { Remove-Item $tmpYaml -ErrorAction SilentlyContinue }
+        Invoke-Step "trigger initial guardian run" {
+            kubectl create job --from=cronjob/foundry-patch-guardian "foundry-patch-guardian-init-$(Get-Date -Format yyyyMMddHHmmss)" -n foundry-local-operator | Out-Null
+        }
     }
 
     # ─── Stage: verify ──────────────────────────────────────────────────────
