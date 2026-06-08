@@ -47,6 +47,52 @@
     # Prep only (safe — no app reg needed yet)
     ./scripts/08-migrate-foundry-to-extension.ps1 `
         -ClusterEnvFile ./config/pdx-mwc-26.env -Stage prep
+
+.NOTES
+    LESSONS LEARNED FROM vi-portland CUTOVER (2026-06-08):
+
+    1. NEW CRD SCHEMA -- the Microsoft.Foundry extension SHIPS DIFFERENT CRDs vs
+       the old `inferenceoperator@0.0.1-prp.5` Helm chart. The `apply-models`
+       stage in this script applies the OLD CRs from k8s/foundry-local.yaml and
+       will FAIL with strict-decoding errors. The new shape is:
+
+         * StoreModel (NEW kind) -- declares the model SOURCE
+             spec: { source: foundry-local, alias: phi-4-mini, compute: gpu,
+                     framework: onnx }
+         * Model (RESHAPED) -- pure metadata; the operator creates it AFTER the
+           StoreModel cache pod finishes downloading
+         * ModelDeployment (RESHAPED) -- spec.authentication is REMOVED;
+           spec.resources.limits.gpu (NOT nvidia.com/gpu) for GPU; required:
+           model, workloadType, compute; new optional runtime: onnx-genai|vllm|maas
+
+       See k8s/foundry-local-extension.yaml for a working new-schema template.
+       The apply-models stage in THIS script still uses the old manifests and
+       MUST be updated before re-running on pdx-mwc-26.
+
+    2. RESOURCE FOOTPRINT -- the new extension's model-store deployment requests
+       1 CPU (registry) + 2 CPU (nginx-sidecar) = 3 CPU. On capacity-constrained
+       clusters (vi-portland: 4 nodes ~4 CPU each, ~95% committed pre-migration)
+       Helm install times out because no node has 3 free CPU. Workarounds tried:
+         * `--config modelStore.resources.requests.cpu=...` -- IGNORED (wrong key)
+         * kubectl patch deployment after creation -- WORKS briefly, but the
+           extension agent re-runs `helm upgrade` and REVERTS the patch.
+       The correct fix requires finding the chart's actual values keys; until
+       then plan for >=3 free CPU and >=1Gi free mem on at least one worker.
+
+    3. WORKERS=4 BUG in inference-operator-api image -- with WORKERS=4 the
+       uvicorn workers recycle every ~1s, liveness probe (curl /healthz) catches
+       the gap, SIGTERMs the container, CrashLoopBackOff forever. WORKERS=1
+       fixes it. Same caveat as #2: kubectl patch is reverted by the agent.
+
+    4. AKS-Admins MEMBERSHIP -- both pdx clusters have enableAzureRbac:false and
+       gate kubectl access on AAD group `AKS-Admins` (094db372-f9b2-4477-937c-
+       869b8cf2bb8a). The operator must be in this group OR have Arc-side admin
+       added via `az role assignment create --role 'Azure Arc Kubernetes Cluster
+       Admin'`. RBAC role alone is not sufficient on legacy-AAD clusters.
+
+    5. HELM RELEASE NAME -- the old chart release is `inferenceoperator` (one
+       word), NOT `inference-operator`. The helm-cleanup stage already accounts
+       for this; do not "correct" it.
 #>
 
 [CmdletBinding()]
@@ -59,7 +105,7 @@ param(
     [string]$Stage,
 
     [string]$FoundryClientId = $env:FOUNDRY_APP_CLIENT_ID,
-    [string]$TenantId = '72f988bf-86f1-41af-91ab-2d7cd011db47',
+    [string]$TenantId,
     [switch]$SkipProxy,
     [switch]$DryRun
 )
@@ -134,6 +180,12 @@ foreach ($t in @('kubectl','helm')) {
 }
 & $azCmd account set --subscription $subId | Out-Null
 
+# Default tenant to the currently-active az tenant if not provided
+if (-not $TenantId) {
+    $TenantId = & $azCmd account show --query tenantId -o tsv
+    Write-Host "Using tenant from az context: $TenantId" -ForegroundColor DarkGray
+}
+
 # ─── Optional: connectedk8s proxy ──────────────────────────────────────────
 $proxyJob = $null
 if (-not $SkipProxy) {
@@ -180,8 +232,8 @@ try {
             kubectl delete model            --all -n $oldModelNs --ignore-not-found 2>$null
         }
 
-        Invoke-Step 'helm uninstall inference-operator (keep CRDs)' {
-            helm uninstall inference-operator -n $oldOpNs 2>$null
+        Invoke-Step 'helm uninstall inferenceoperator (keep CRDs)' {
+            helm uninstall inferenceoperator -n $oldOpNs 2>$null
             # CRDs are cluster-scoped; chart should not own them. Verify they remain.
             $crd = kubectl get crd models.foundrylocal.azure.com -o name 2>$null
             if (-not $crd) {

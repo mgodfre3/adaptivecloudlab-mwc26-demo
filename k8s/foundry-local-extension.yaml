@@ -1,0 +1,55 @@
+# Foundry Local CRs for the Microsoft.Foundry Arc extension (new schema).
+#
+# REPLACES k8s/foundry-local.yaml and k8s/vi-foundry-local.yaml (those use the
+# OLD inferenceoperator@0.0.1-prp.5 Helm chart's CRD schema and will fail to
+# apply with strict-decoding errors against the new extension).
+#
+# Chain: StoreModel ─► (cache pod downloads artifact) ─► Model (auto-created by
+# operator) ─► ModelDeployment (refs Model by name).
+#
+# Apply to the SAME namespace as the operator's release-namespace
+# (foundry-local-operator) so the operator resolves the Model ref. If you want
+# multi-tenant model namespaces, set spec.namespaces in the operator extension
+# config.
+---
+apiVersion: foundrylocal.azure.com/v1
+kind: StoreModel
+metadata:
+  name: phi-4-mini
+  namespace: foundry-local-operator
+spec:
+  source: foundry-local         # foundry-local | foundry | huggingface | custom | azureml-foundrylocalonazurelocal
+  alias: phi-4-mini
+  compute: gpu                  # cpu | gpu
+  framework: onnx               # onnx | vllm
+---
+apiVersion: foundrylocal.azure.com/v1
+kind: ModelDeployment
+metadata:
+  name: phi-4-deployment
+  namespace: foundry-local-operator
+spec:
+  displayName: Phi-4 Edge AI
+  model:
+    ref: phi-4-mini             # name of the Model CR the operator creates from StoreModel above
+  compute: gpu                  # MUST match StoreModel.spec.compute
+  workloadType: generative      # generative | predictive
+  runtime: onnx-genai           # onnx-genai | vllm | maas
+  replicas: 1
+  port: 5000
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "2Gi"
+    limits:
+      cpu: "2"
+      memory: "3Gi"
+      gpu: 1                    # NOTE: schema uses bare `gpu`, NOT `nvidia.com/gpu`
+  # Optional: expose via ingress
+  # endpoint:
+  #   enabled: true
+  #   host: phi-4.example.com
+  #   ingressClassName: nginx
+  #   tls:
+  #     enabled: true
+  #     secretName: phi-4-tls
