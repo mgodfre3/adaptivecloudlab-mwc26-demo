@@ -158,6 +158,68 @@
        Discovery pattern (reusable for any chart bug): pull the helm release
        secret, gzip-decode the .data.release blob, inspect chart.templates +
        chart.values to find which values are actually wired vs hardcoded.
+
+    9. ORPHAN cert-manager WEBHOOK CONFIGS (pdx-mwc-26 pattern) — when a cluster
+       has BOTH an old non-Flux cert-manager install (Deployments named
+       `cert-manager`, `cert-manager-cainjector`, `cert-manager-webhook`) AND a
+       newer Flux-managed install (Deployments named
+       `cert-manager-cert-manager*`), the old install's ValidatingWebhook +
+       MutatingWebhook configs (`cert-manager-webhook`) survive after the old
+       Deployments are deleted and point to a non-existent Service
+       `cert-manager-webhook.cert-manager.svc:443`. Foundry's helm install
+       creates Certificate CRs that match those webhooks, and the API server
+       fails the admission call with `service "cert-manager-webhook" not
+       found`, causing Foundry helm install to fail with 7 webhook errors.
+
+       Detection (run BEFORE Microsoft.Foundry install):
+         kubectl get validatingwebhookconfiguration,mutatingwebhookconfiguration | grep cert-manager
+       If you see BOTH `cert-manager-webhook` AND `cert-manager-cert-manager-webhook`,
+       the orphan must be deleted:
+         kubectl delete validatingwebhookconfiguration cert-manager-webhook
+         kubectl delete mutatingwebhookconfiguration cert-manager-webhook
+       Leave `cert-manager-cert-manager-webhook` (Flux-managed) intact.
+
+   10. STUCK ARC EXTENSION QUEUE (pdx-mwc-26 pattern) — a FAILED extension on
+       the cluster (e.g., AIO with a bad pre-upgrade hook job hitting
+       BackoffLimitExceeded) can block the Arc extension-manager from
+       processing NEW extension installs for HOURS. Symptom: az shows
+       provisioningState=Creating with version=null, statuses=[], no helm
+       release created, no logs in extension-manager mentioning the new
+       extension. The extension-manager processes one extension at a time and
+       retries failed ones at high frequency, starving the new install.
+
+       Remediation:
+         a) `az k8s-extension list -c <cluster> -g <rg> --cluster-type connectedClusters -o table`
+            identify any extensions in Failed/Updating state.
+         b) For broken/abandoned extensions (e.g., AIO with Entra app deleted
+            from tenant): `az k8s-extension delete --name <bad-ext> ... --force --yes`
+         c) For stuck-pending-upgrade helm releases: `helm rollback <release>
+            <last-deployed-revision> -n <ns>`
+         d) Restart `kubectl rollout restart -n azure-arc deployment/extension-manager`
+            to force a fresh poll.
+       Once the queue clears (1-2 min), the new extension picks up reconcile.
+
+       Diagnostic queries:
+         kubectl logs -n azure-arc -l app.kubernetes.io/component=extension-manager --tail 200 | \
+           Select-String "Helm State Observer.*pending"
+         kubectl get azureclusteridentityrequest -A
+         kubectl logs -n azure-arc -l app.kubernetes.io/component=cluster-identity-operator -c manager --tail 100 | \
+           Select-String AADSTS
+
+   11. MOC OutOfCapacity HARD BLOCKER — when the Azure Local host cluster has
+       no free MOC capacity, both new VHDs and new VM provisioning fail with:
+         `error with code MocUnreachable occured: ... Location 'MocLocation'
+          doesn't expose any nodes to create VHD/VM '<name>' on: OutOfCapacity`
+       This is NOT a kubectl/extension-manager issue and CANNOT be fixed from
+       the AKS cluster side. It blocks BOTH the model-store PVC provisioning
+       (disk.csi.akshci.com hits OutOfCapacity on the VHD) AND any nodepool
+       scale-up. Operator action required at the HCI host: free capacity by
+       removing orphan MOC VMs (dead k8s nodes still hold their MOC VM
+       allocations until explicitly deleted via MOC CLI) OR add host capacity.
+       Detection: `az aksarc nodepool show ... --query status.errorMessage`.
+       Workaround attempts that DO NOT work: deleting Released PVs (delete
+       hangs because CSI driver can't reach MOC); requesting a smaller PVC
+       (MOC capacity is about VM/VHD slot count, not bytes).
 #>
 
 [CmdletBinding()]
@@ -348,6 +410,22 @@ try {
             Write-Warning 'Cannot install Microsoft.Foundry without an Entra app registration client ID.'
             Write-Warning 'Skipping `foundry` stage. Re-run with -FoundryClientId <guid> once app reg exists.'
         } else {
+            # Preflight: delete orphan cert-manager webhook configs that point to a
+            # non-existent Service (see Note #9). Detection: if BOTH
+            # `cert-manager-webhook` AND `cert-manager-cert-manager-webhook` exist,
+            # the un-prefixed one is the orphan and will fail Foundry's admission calls.
+            Invoke-Step 'Preflight: clean orphan cert-manager webhook configs' {
+                $vw = kubectl get validatingwebhookconfiguration -o jsonpath='{.items[*].metadata.name}' 2>$null
+                $mw = kubectl get mutatingwebhookconfiguration -o jsonpath='{.items[*].metadata.name}' 2>$null
+                if ($vw -match '\bcert-manager-webhook\b' -and $vw -match '\bcert-manager-cert-manager-webhook\b') {
+                    Write-Host '    Found orphan cert-manager-webhook ValidatingWebhookConfiguration — deleting.' -ForegroundColor Yellow
+                    kubectl delete validatingwebhookconfiguration cert-manager-webhook --ignore-not-found
+                }
+                if ($mw -match '\bcert-manager-webhook\b' -and $mw -match '\bcert-manager-cert-manager-webhook\b') {
+                    Write-Host '    Found orphan cert-manager-webhook MutatingWebhookConfiguration — deleting.' -ForegroundColor Yellow
+                    kubectl delete mutatingwebhookconfiguration cert-manager-webhook --ignore-not-found
+                }
+            }
             Invoke-Step 'az k8s-extension create Microsoft.Foundry' {
                 & $azCmd k8s-extension create `
                     --resource-group $rg `
@@ -368,6 +446,13 @@ try {
                     --cluster-type connectedClusters --name inference-operator `
                     --query 'provisioningState' -o tsv
                 Write-Host "    provisioningState = $state" -ForegroundColor $(if ($state -eq 'Succeeded') { 'Green' } else { 'Yellow' })
+                if ($state -eq 'Creating' -or $state -eq 'Updating') {
+                    Write-Host '    NOTE: Extension is still installing. If it stays in Creating > 10 min, check:' -ForegroundColor Yellow
+                    Write-Host '      kubectl get pods -n foundry-local-operator                # operator pods' -ForegroundColor Yellow
+                    Write-Host '      kubectl get pvc -n foundry-local-operator                 # model-store PVC (must Bind)' -ForegroundColor Yellow
+                    Write-Host '      az k8s-extension list -c $cluster -g $rg --cluster-type connectedClusters -o table' -ForegroundColor Yellow
+                    Write-Host '      (look for other extensions Failed/Updating — see Note #10)' -ForegroundColor Yellow
+                }
             }
         }
     }
