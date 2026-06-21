@@ -1,0 +1,47 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: dcgm-exporter
+  namespace: flux-system
+spec:
+  interval: 1h
+  targetNamespace: monitoring
+  # DCGM exporter requires the monitoring namespace (and Prometheus) to be present.
+  dependsOn:
+    - name: kube-prometheus-stack
+  install:
+    createNamespace: false
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  chart:
+    spec:
+      chart: dcgm-exporter
+      # Check https://github.com/NVIDIA/dcgm-exporter/releases for the latest chart version.
+      version: "3.5.0"
+      sourceRef:
+        kind: HelmRepository
+        name: nvidia
+        namespace: flux-system
+      interval: 1h
+  values:
+    serviceMonitor:
+      enabled: true
+      additionalLabels:
+        release: kube-prometheus-stack
+    # nodeSelector is intentionally left empty in the base.
+    # Each cluster overlay must patch this with the correct GPU node pool label.
+    # Example for Portland: msft.microsoft/nodepool-name: pdx-aks-ead6c2bf-pdxgpu
+    # See infrastructure/mobile/patches/dcgm-nodeselector.yaml for the mobile override.
+    nodeSelector: {}
+    tolerations:
+      - operator: Exists
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi

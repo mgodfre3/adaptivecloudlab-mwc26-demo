@@ -1,0 +1,31 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: trust-manager
+  namespace: flux-system
+spec:
+  interval: 1h
+  targetNamespace: cert-manager
+  # trust-manager requires cert-manager to be fully ready before installation.
+  dependsOn:
+    - name: cert-manager
+  install:
+    createNamespace: false
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  chart:
+    spec:
+      chart: trust-manager
+      version: "v0.20.3"
+      sourceRef:
+        kind: HelmRepository
+        name: jetstack
+        namespace: flux-system
+      interval: 1h
+  values:
+    app:
+      trust:
+        namespace: cert-manager

@@ -1,0 +1,20 @@
+# Patch: Override DCGM Exporter nodeSelector for the mobile cluster GPU node pool.
+#
+# The DCGM exporter must be scheduled on the GPU node(s) only. Update the
+# value below with the actual node pool label for the mobile cluster once the
+# cluster is provisioned. You can find the label with:
+#   kubectl get nodes --show-labels | grep gpu
+#
+# For the Portland cluster the equivalent value is:
+#   msft.microsoft/nodepool-name: pdx-aks-ead6c2bf-pdxgpu
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: dcgm-exporter
+  namespace: flux-system
+spec:
+  values:
+    nodeSelector:
+      # TODO: replace with the mobile cluster GPU node pool label.
+      # Example: msft.microsoft/nodepool-name: mobile-aks-<hash>-gpu
+      msft.microsoft/nodepool-name: mobile-gpu

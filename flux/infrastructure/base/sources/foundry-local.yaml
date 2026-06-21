@@ -1,0 +1,12 @@
+# Foundry Local Inference Operator — Private Preview OCI chart.
+# Source: oci://mcr.microsoft.com/foundrylocalonazurelocal/helmcharts/helm
+# Note: This chart is in Private Preview; access requires enrollment.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: foundry-local
+  namespace: flux-system
+spec:
+  type: oci
+  interval: 1h
+  url: oci://mcr.microsoft.com/foundrylocalonazurelocal/helmcharts/helm

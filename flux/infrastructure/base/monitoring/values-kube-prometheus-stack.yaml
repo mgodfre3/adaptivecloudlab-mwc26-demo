@@ -1,0 +1,143 @@
+# ConfigMap holding kube-prometheus-stack Helm values.
+# These values are sourced from k8s/monitoring-values.yaml.
+# To apply cluster-specific overrides (e.g. storage class, node selectors, domain),
+# patch this ConfigMap in the cluster overlay (e.g. infrastructure/mobile/patches/).
+#
+# Grafana admin credentials are NOT stored here. They are sourced from the
+# 'grafana-admin-credentials' Secret (see helmrelease-kube-prometheus-stack.yaml).
+# Create the Secret before bootstrapping Flux:
+#   kubectl create secret generic grafana-admin-credentials \
+#     --namespace flux-system \
+#     --from-literal=admin-user=admin \
+#     --from-literal=admin-password=<YOUR_PASSWORD>
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kube-prometheus-stack-values
+  namespace: flux-system
+data:
+  values.yaml: |
+    grafana:
+      enabled: true
+
+      persistence:
+        enabled: true
+        size: 5Gi
+
+      service:
+        type: ClusterIP
+        port: 80
+
+      sidecar:
+        dashboards:
+          enabled: true
+          label: grafana_dashboard
+          labelValue: "1"
+          folderAnnotation: grafana_folder
+          provider:
+            foldersFromFilesStructure: true
+        datasources:
+          enabled: true
+
+      additionalDataSources: []
+
+      grafana.ini:
+        server:
+          # root_url is cluster-specific; override via a cluster overlay patch.
+          serve_from_sub_path: false
+        auth.anonymous:
+          enabled: true
+          org_role: Viewer
+        security:
+          allow_embedding: true
+
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+
+    prometheus:
+      prometheusSpec:
+        retention: 7d
+
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+          limits:
+            cpu: "1"
+            memory: 2Gi
+
+        storageSpec:
+          volumeClaimTemplate:
+            spec:
+              accessModes: ["ReadWriteOnce"]
+              resources:
+                requests:
+                  storage: 20Gi
+
+        additionalScrapeConfigs:
+          - job_name: 'dcgm-exporter'
+            scrape_interval: 15s
+            kubernetes_sd_configs:
+              - role: endpoints
+                namespaces:
+                  names:
+                    - monitoring
+            relabel_configs:
+              - source_labels: [__meta_kubernetes_service_name]
+                regex: dcgm-exporter
+                action: keep
+              - source_labels: [__meta_kubernetes_endpoint_port_name]
+                regex: metrics
+                action: keep
+
+    alertmanager:
+      enabled: false
+
+    nodeExporter:
+      enabled: true
+
+    kubeStateMetrics:
+      enabled: true
+
+    defaultRules:
+      create: true
+      rules:
+        alertmanager: false
+        etcd: false
+        configReloaders: false
+        general: true
+        k8sContainerCpuUsageSecondsTotal: true
+        k8sContainerMemoryCache: true
+        k8sContainerMemoryRss: true
+        k8sContainerMemorySwap: false
+        k8sContainerResource: true
+        k8sPodOwner: true
+        kubeApiserverAvailability: false
+        kubeApiserverBurnrate: false
+        kubeApiserverHistogram: false
+        kubeApiserverSlos: false
+        kubeControllerManager: false
+        kubeProxy: false
+        kubeSchedulerAlerting: false
+        kubeSchedulerRecording: false
+        kubeStateMetrics: true
+        kubelet: true
+        node: true
+        nodeExporterAlerting: false
+        nodeExporterRecording: true
+        prometheus: true
+        prometheusOperator: false
+
+    kubeControllerManager:
+      enabled: false
+    kubeScheduler:
+      enabled: false
+    kubeProxy:
+      enabled: false
+    kubeEtcd:
+      enabled: false

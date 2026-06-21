@@ -1,0 +1,61 @@
+# Foundry Local Inference Operator — Private Preview OCI Helm chart.
+# Manages Phi-4 Mini model lifecycle (download, GPU scheduling, TLS, API key auth).
+#
+# Prerequisites:
+#   - cert-manager and trust-manager must be running (hard dependency).
+#   - The 'foundry-api-key' Secret MUST exist in the flux-system namespace
+#     before this HelmRelease is reconciled. Create it with:
+#       kubectl create secret generic foundry-api-key \
+#         --namespace flux-system \
+#         --from-literal=apiKey=<YOUR_KEY>
+#     Or provision it via Azure Key Vault + External Secrets Operator.
+#     If the apiKey is not required for Private Preview access, create the
+#     Secret with an empty value:
+#       kubectl create secret generic foundry-api-key \
+#         --namespace flux-system \
+#         --from-literal=apiKey=""
+#
+# Note: This chart is in Private Preview. The OCI chart at
+#   oci://mcr.microsoft.com/foundrylocalonazurelocal/helmcharts/helm/inferenceoperator
+# may not be publicly accessible. If it fails, use the local fallback:
+#   inference-operator-0.0.1-prp.5.tgz (included in the repo root).
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: inferenceoperator
+  namespace: flux-system
+spec:
+  interval: 1h
+  targetNamespace: foundry-local
+  # Foundry operator requires cert-manager and trust-manager CRDs and webhooks.
+  dependsOn:
+    - name: cert-manager
+    - name: trust-manager
+  install:
+    createNamespace: false
+    timeout: 15m
+    remediation:
+      retries: 3
+  upgrade:
+    timeout: 15m
+    remediation:
+      retries: 3
+  chart:
+    spec:
+      chart: inferenceoperator
+      version: "0.0.1-prp.5"
+      sourceRef:
+        kind: HelmRepository
+        name: foundry-local
+        namespace: flux-system
+      interval: 1h
+  values:
+    operator:
+      modelsNamespace: foundry-models
+  # The Foundry API key is stored in a Secret and injected at install time.
+  # The Secret must be pre-provisioned; see the note above.
+  valuesFrom:
+    - kind: Secret
+      name: foundry-api-key
+      valuesKey: apiKey
+      targetPath: apiKey
