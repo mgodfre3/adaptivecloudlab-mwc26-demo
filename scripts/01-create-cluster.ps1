@@ -171,6 +171,37 @@ if ($rgExists -ne "true") {
 }
 Write-Host "✅ Resource group: $rgName" -ForegroundColor Green
 
+if ($envVars["IPAM_RESERVATION_NICS"]) {
+    foreach ($name in $envVars["IPAM_RESERVATION_NICS"].Split(",")) {
+        $name = $name.Trim()
+        if (-not $name) { throw "IPAM_RESERVATION_NICS contains an empty NIC name." }
+        $json = az resource show --resource-group $rgName --name $name `
+            --resource-type Microsoft.AzureStackHCI/networkInterfaces --api-version 2024-01-01 `
+            --output json --only-show-errors | Out-String
+        if ($LASTEXITCODE -ne 0) { throw "Required IPAM reservation NIC '$name' could not be read." }
+        $reservation = $json | ConvertFrom-Json
+        if ($reservation.properties.provisioningState -ne "Succeeded" -or
+            $reservation.tags.purpose -ne "IPAM-reservation-do-not-attach") {
+            throw "NIC '$name' is not a successful IPAM reservation."
+        }
+        if (@($reservation.properties.ipConfigurations).Count -eq 0) {
+            throw "Reservation NIC '$name' has no reserved IP configuration."
+        }
+        foreach ($configuration in $reservation.properties.ipConfigurations) {
+            if (-not $configuration.properties.privateIPAddress) {
+                throw "Reservation NIC '$name' has no reserved IP address."
+            }
+            if ($configuration.properties.subnet.id -ne $vnetId) {
+                throw "Reservation NIC '$name' belongs to a different logical network."
+            }
+            if ($controlPlaneIp -and $configuration.properties.privateIPAddress -eq $controlPlaneIp) {
+                throw "CONTROL_PLANE_IP conflicts with reservation NIC '$name'."
+            }
+        }
+    }
+    Write-Host "IPAM reservations verified before cluster creation." -ForegroundColor Green
+}
+
 # ── Step 3: Retrieve SSH public key from Key Vault ──────────────────────────
 Write-Host "🔐 Retrieving SSH public key from Key Vault '$kvName'..." -ForegroundColor Yellow
 $sshPubKey = az keyvault secret show --vault-name $kvName --name "$sshKeyName-pub" --query "value" -o tsv 2>$null

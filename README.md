@@ -370,9 +370,12 @@ The PDX configuration also preserves three control-plane nodes and API IP
 
 On the shared PDX VLAN31 logical network, `.130` belongs to a host storage
 adapter and must never be reused as the API address. Unattached Azure Local
-NICs `pdx-mwc-26-reserved-130` and `pdx-mwc-26-reserved-180` through
-`pdx-mwc-26-reserved-185` in `pdx-rg` reserve that storage address and the
-MetalLB range in IPAM. Keep these reservation NICs unattached and retain them
+NICs `pdx-mwc-26-reserved-130`, `pdx-mwc-26-reserved-132`, and
+`pdx-mwc-26-reserved-180` through `pdx-mwc-26-reserved-185` in `pdx-rg`
+reserve that storage address, an independently observed ARP conflict on `.132`,
+and the MetalLB range in IPAM. `IPAM_RESERVATION_NICS` makes the provisioning
+script verify these reservations before creating the cluster or adding pools.
+Keep these reservation NICs unattached and retain them
 while the logical network's allocation pool includes those addresses.
 The other host's storage address, `.131`, is currently occupied in IPAM by
 an unrelated cluster's worker. If that allocation is removed, reserve `.131`
