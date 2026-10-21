@@ -14,6 +14,7 @@ data:
   EDGE_AI_ENDPOINT: "https://phi-4-deployment.foundry-local-operator.svc:5000"
   EDGE_AI_MODEL: "Phi-4-mini-instruct-cuda-gpu:5"
   EDGE_AI_INTERVAL: "15"
+  DCGM_EXPORTER_URL: "http://monitoring-dcgm-exporter.monitoring.svc.cluster.local:9400/metrics"
   IOT_HUB_NAME: "changeme"
   SEND_INTERVAL_SECONDS: "5"
   DATA_MODE: "cloud"
