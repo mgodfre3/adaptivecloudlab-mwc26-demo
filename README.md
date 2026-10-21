@@ -368,6 +368,22 @@ when rebuilding the cluster.
 Trust-manager must also enable Secret targets for the
 `foundry-local-operator-ca-bundle` name; the GitOps release authorizes that name
 explicitly rather than granting writes to every Secret name.
+PDX sets the extension's `storeModel.cacheJob.resources.requests.memory` to
+`6Gi`, its cache CPU request to `500m`, and
+`storeModel.cacheJob.resources.limits.memory` to `12Gi` for Phi-4's
+3.8-GiB artifact. The default `16Gi` cache request exceeds the allocatable
+memory of the 16-GiB system workers and cannot schedule; these settings leave
+room for system services without increasing the user-worker sizes.
+PDX also sets `model-store.registry.resources.requests.cpu` to `250m`.
+The extension shares this request with its initialization and scheduled garbage
+collection jobs. Their `2`-CPU burst limit and `1Gi` memory request remain
+unchanged, and cleanup can schedule alongside the running management API.
+The operator uses required self-affinity with its release label, component-aware
+`matchLabelKeys`, and hostname topology. Its API already follows the operator; this keeps
+rolling replacements on the shared RWO evaluation volume's node while allowing
+the first operator to schedule during a clean installation. The shared affinity
+also lets telemetry replacements follow their own component rather than forcing
+all extension components onto the operator's node.
 
 The PDX GPU pool uses the stable label `workload=gpu` and the
 `nvidia.com/gpu=present:NoSchedule` taint. This keeps Arc management deployments
