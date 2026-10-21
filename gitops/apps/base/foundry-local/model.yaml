@@ -1,44 +1,24 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: foundry-local
-  labels:
-    app: edge-ai
-    demo: mwc26
----
-apiVersion: foundrylocal.azure.com/v1
-kind: Model
-metadata:
-  name: phi-4-mini
-  namespace: foundry-local
-spec:
-  displayName: "Phi-4 Mini Instruct"
-  description: "Microsoft Phi-4 Mini - compact 14B parameter SLM for edge AI inference"
-  publisher: "Microsoft"
-  source:
-    type: catalog
-    catalog:
-      alias: "phi-4-mini"
----
 apiVersion: foundrylocal.azure.com/v1
 kind: ModelDeployment
 metadata:
   name: phi-4-deployment
-  namespace: foundry-local
+  namespace: foundry-local-operator
 spec:
-  displayName: "Phi-4 Edge AI Deployment"
+  displayName: "Phi-4 mini (CUDA GPU)"
   model:
-    ref: phi-4-mini
+    catalog:
+      name: "Phi-4-mini-instruct-cuda-gpu"
+      version: "5"
   workloadType: generative
   compute: gpu
+  runtime: onnx-genai
   replicas: 1
+  port: 5000
   resources:
     requests:
-      cpu: "1"
-      memory: "4Gi"
+      cpu: "300m"
+      memory: "1Gi"
     limits:
-      cpu: "3"
-      memory: "5Gi"
+      cpu: "4000m"
+      memory: "12Gi"
       gpu: 1
-  authentication:
-    enabled: true

@@ -74,7 +74,7 @@ patches:
   - target:
       kind: ModelDeployment
       name: phi-4-deployment
-      namespace: foundry-local
+      namespace: foundry-local-operator
     patch: |
       - op: replace
         path: /spec/resources/requests/cpu

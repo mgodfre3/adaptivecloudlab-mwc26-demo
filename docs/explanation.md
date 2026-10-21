@@ -248,7 +248,7 @@ The AI analysis runs on a separate background thread, independent of the telemet
 [Immediate emit — socketio.emit("ai_insights", result)]
         │
         │  3. If EDGE_AI_ENABLED=true:
-        │     POST https://phi-4-deployment.foundry-local.svc:5000/v1/chat/completions
+        │     POST https://phi-4-deployment.foundry-local-operator.svc:5000/v1/chat/completions
         │     Headers: api-key: <foundry-key>
         │     Body: {model, messages, temperature: 0.3, max_tokens: 120}
         ▼
@@ -277,35 +277,31 @@ All AI inference happens on the GPU node inside the AKS Arc cluster on-premises.
 - Is **never called via the internet** — only via an in-cluster Kubernetes service
 - Has no dependency on Azure OpenAI or any external inference API
 
-The in-cluster service address is `phi-4-deployment.foundry-local.svc:5000`. Traffic never leaves the physical servers.
+The in-cluster service address is `phi-4-deployment.foundry-local-operator.svc:5000`. Models and the Foundry Local extension share this namespace. Traffic never leaves the physical servers.
 
 ### Foundry Local Inference Operator
 
-The **Foundry Local Inference Operator** (Private Preview, v0.0.1-prp.5) is a Kubernetes operator that manages the full lifecycle of the Phi-4 model:
+The **Foundry Local Inference Operator** is a Kubernetes operator that manages the full lifecycle of the Phi-4 model:
 
 ```
 [Foundry Local Operator — foundry-local-operator namespace]
         │
-        │  watches Model + ModelDeployment CRDs
-        ▼
-Model CRD (phi-4-mini):
-  source:
-    type: catalog
-    catalog:
-      alias: "phi-4-mini"
-        │
-        │  1. Downloads Phi-4-mini-instruct from catalog
+        │  watches ModelDeployment CRDs in its own namespace
         ▼
 ModelDeployment CRD (phi-4-deployment):
+  namespace: foundry-local-operator
+  model:
+    catalog:
+      name: Phi-4-mini-instruct-cuda-gpu
+      version: "5"
   workloadType: generative
   compute: gpu
   replicas: 1
   resources:
     limits:
       gpu: 1          ← pins to NVIDIA A2
-  authentication:
-    enabled: true     ← auto-generates API key
         │
+        │  1. Downloads the catalog model via the model store
         │  2. Schedules inference pod on GPU node
         │  3. Creates ClusterIP service (:5000)
         │  4. Creates secret: phi-4-deployment-api-keys
@@ -452,7 +448,7 @@ Dashboard Pod (Flask + Socket.IO, port 5000)
     │
     ├──── reads ────> drone_state dict (in-memory or Event Hub)
     │
-    └──── calls ────> phi-4-deployment.foundry-local.svc:5000
+    └──── calls ────> phi-4-deployment.foundry-local-operator.svc:5000
                           │
                           ▼
                       GPU Node (NVIDIA A2)
@@ -494,7 +490,7 @@ The browser only ever contacts `172.21.229.201` (MetalLB VIP). All service-to-se
 
 | File | Contents |
 |---|---|
-| `foundry-local.yaml` | `Model` and `ModelDeployment` CRDs for Phi-4 Mini |
+| `foundry-local.yaml` | Phi-4 Mini `ModelDeployment` in the Foundry extension namespace |
 | `drone-demo.yaml.template` | Dashboard + Simulator Deployments, Service, Ingress (rendered by deploy script) |
 | `metallb-config.yaml` | MetalLB `IPAddressPool` and `L2Advertisement` for VIP `172.21.229.201` |
 | `monitoring-values.yaml` | Helm values for `kube-prometheus-stack` |

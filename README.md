@@ -350,23 +350,31 @@ $env:AZURE_EXTENSION_DIR = "$env:TEMP\az_extensions"
 
 After the operator is installed, create the ModelDeployment:
 
+**Namespace requirement:** Models must run in the same namespace as the Foundry
+Local extension before upgrading it. On `pdx-mwc-26`, this is
+`foundry-local-operator`, not `pdx-foundry-mdl` or `foundry-local`. The checked-in
+GitOps manifest and `k8s/foundry-local.yaml` use this namespace. For another
+installation, use its extension release namespace in both the manifest and
+`EDGE_AI_ENDPOINT`; do not create a separate model namespace.
+
 ```powershell
 # Connect to the cluster
 az connectedk8s proxy --name <cluster> --resource-group <rg>
 
 # Deploy the Phi-4 model on the GPU node
-# NOTE: catalog name is "phi-4-mini", NOT "Phi-4-mini-instruct"
+# Use the catalog model and version supported by the installed extension.
 cat <<'EOF' | kubectl apply -f -
 apiVersion: foundrylocal.azure.com/v1
 kind: ModelDeployment
 metadata:
   name: phi-4-deployment
-  namespace: <foundry-mdl-namespace>   # e.g. mobile-foundry-mdl
+  namespace: foundry-local-operator   # Must match the extension release namespace
 spec:
   displayName: Phi-4 Mini
   model:
     catalog:
-      name: phi-4-mini
+      name: Phi-4-mini-instruct-cuda-gpu
+      version: "5"
   compute: gpu
   workloadType: generative
   replicas: 1
@@ -384,19 +392,22 @@ spec:
 EOF
 
 # Watch the model download and deployment (takes ~5-8 min for 3.6GB model)
-kubectl get modeldeployment -n <foundry-mdl-namespace> -w
+kubectl get modeldeployment -n foundry-local-operator -w
 
 # Verify the inference service is running (2/2 Ready)
-kubectl get pods -n <foundry-mdl-namespace>
-kubectl get svc -n <foundry-mdl-namespace>
+kubectl get pods -n foundry-local-operator
+kubectl get svc -n foundry-local-operator
 ```
 
-> **Note:** If the operator CA bundle secret is missing in the model namespace, copy it:
-> ```powershell
-> kubectl get secret <operator-ns>-ca-bundle -n <operator-ns> -o yaml | \
->   sed "s/namespace: <operator-ns>/namespace: <foundry-mdl-namespace>/" | \
->   kubectl apply -f -
-> ```
+For an existing cross-namespace deployment, preserve its API-key secret in the
+extension namespace without printing or committing its values, recreate the
+ModelDeployment there, and update clients to
+`https://phi-4-deployment.foundry-local-operator.svc:5000`. On a single-GPU
+installation, save the old manifest for rollback and delete the old
+ModelDeployment to release its GPU before starting the replacement. Do not
+delete the old namespace as a shortcut. Verify authenticated inference and the
+dashboard after cutover. Model download caches are ephemeral, so allow time to
+reload the model from the model store.
 
 > **Important:** If the Helm OCI install fails with `pending-install`, use the bundled `.tgz`:
 > ```powershell
@@ -420,7 +431,7 @@ cp .env.sample .env
 # Edit .env — fill in EDGE_AI_API_KEY and EDGE_AI_ENDPOINT (see below)
 
 # Port-forward the Foundry Local inference service (in a separate terminal)
-kubectl port-forward svc/phi-4-deployment -n <foundry-mdl-namespace> 8443:5000
+kubectl port-forward svc/phi-4-deployment -n foundry-local-operator 8443:5000
 
 # Run the dashboard
 python app.py
@@ -431,13 +442,13 @@ python app.py
 **`EDGE_AI_ENDPOINT`** — When deployed to a Kubernetes cluster, the dashboard connects to the Foundry Local service directly via its ClusterIP service:
 
 ```
-https://phi-4-deployment.<foundry-mdl-namespace>.svc:5000
+https://phi-4-deployment.foundry-local-operator.svc:5000
 ```
 
 For local development, use `kubectl port-forward`:
 
 ```powershell
-kubectl port-forward svc/phi-4-deployment -n <foundry-mdl-namespace> 8443:5000
+kubectl port-forward svc/phi-4-deployment -n foundry-local-operator 8443:5000
 ```
 
 Then set the endpoint to `https://localhost:8443`.
@@ -448,13 +459,13 @@ Then set the endpoint to `https://localhost:8443`.
 
 ```powershell
 # Get the API key from the Kubernetes secret (use your model namespace)
-kubectl get secret phi-4-deployment-api-keys -n <foundry-mdl-namespace> -o jsonpath='{.data.primary-key}' | ForEach-Object { [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($_)) }
+kubectl get secret phi-4-deployment-api-keys -n foundry-local-operator -o jsonpath='{.data.primary-key}' | ForEach-Object { [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($_)) }
 ```
 
 Or on Linux/macOS:
 
 ```bash
-kubectl get secret phi-4-deployment-api-keys -n <foundry-mdl-namespace> \
+kubectl get secret phi-4-deployment-api-keys -n foundry-local-operator \
   -o jsonpath='{.data.primary-key}' | base64 -d
 ```
 
@@ -575,7 +586,7 @@ This URL is served by the NGINX Ingress controller on the AKS Arc cluster via Me
 | Ingress Host | `mwc.adaptivecloudlab.com` |
 | Dashboard Pod | Runs on user pool nodes (`pdxuser`) |
 | Simulator Pod | Runs on user pool nodes (`pdxuser`) |
-| AI Endpoint (in-cluster) | `https://phi-4-deployment.foundry-local.svc:5000` |
+| AI Endpoint (in-cluster) | `https://phi-4-deployment.foundry-local-operator.svc:5000` |
 
 ---
 
@@ -605,7 +616,7 @@ adaptivecloudlab-mwc26-demo/
 │   ├── 06-deploy-video-indexer.ps1     # Longhorn storage + Arc Video Indexer extension
 │   └── 07-deploy-video-dashboard.ps1   # Build + deploy Video Intelligence dashboard
 ├── k8s/
-│   ├── foundry-local.yaml             # Foundry Local Model + ModelDeployment CRDs (drone demo)
+│   ├── foundry-local.yaml             # ModelDeployment in the Foundry extension namespace
 │   ├── vi-foundry-local.yaml          # Foundry Local for Video Intelligence cluster
 │   ├── edge-ai.yaml                    # Ollama deployment (alternative GPU inference)
 │   ├── iot-ops-dataflow.yaml           # AIO Dataflow for selective cloud export (data sovereignty)
@@ -777,7 +788,7 @@ The demo uses **Foundry Local Inference Operator** (Private Preview) to run Phi-
 | Model catalog alias | `phi-4-mini` |
 | Model runtime ID | `Phi-4-mini-instruct-cuda-gpu:5` |
 | GPU | NVIDIA GPU on edge node |
-| Service | `phi-4-deployment.<foundry-mdl-namespace>.svc:5000` (ClusterIP, port 5000 → targetPort 8443 via nginx TLS sidecar) |
+| Service | `phi-4-deployment.foundry-local-operator.svc:5000` (ClusterIP, port 5000 → targetPort 8443 via nginx TLS sidecar) |
 | Auth | API key via `api-key` header (auto-generated, stored in `phi-4-deployment-api-keys` secret) |
 
 > **Important:** The catalog model name is `phi-4-mini` (not `Phi-4-mini-instruct`). Using the wrong name returns "Model not found in catalog." The runtime model ID used in API calls is `Phi-4-mini-instruct-cuda-gpu:5`.
@@ -860,7 +871,7 @@ Primary configuration file. All resource names are auto-derived from `PREFIX`. K
 | `DEMO_MODE` | Use synthetic data (no IoT Hub) | `true` |
 | `DATA_MODE` | Telemetry source: `demo`, `cloud` (IoT Hub), or `edge` (AIO MQTT) | `cloud` |
 | `EDGE_AI_ENABLED` | Enable Foundry Local AI insights | `true` |
-| `EDGE_AI_ENDPOINT` | Foundry Local API URL | `https://phi-4-deployment.<foundry-mdl-namespace>.svc:5000` (in-cluster) or `https://localhost:8443` (via port-forward) |
+| `EDGE_AI_ENDPOINT` | Foundry Local API URL | `https://phi-4-deployment.foundry-local-operator.svc:5000` (in-cluster) or `https://localhost:8443` (via port-forward) |
 | `EDGE_AI_MODEL` | Model runtime ID for inference | `Phi-4-mini-instruct-cuda-gpu:5` |
 | `EDGE_AI_API_KEY` | API key for Foundry Local | Retrieve from K8s secret — see [How to get EDGE_AI_API_KEY](#how-to-get-edge_ai_endpoint-and-edge_ai_api_key) |
 | `EDGE_AI_INTERVAL` | Seconds between AI analysis cycles | `15` |

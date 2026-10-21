@@ -53,7 +53,7 @@ Physical Servers (Azure Local HCI)
 | Dashboard URL | `https://mwc.adaptivecloudlab.com` |
 | Grafana URL | `https://grafana.adaptivecloudlab.com` |
 | MetalLB VIP | `172.21.229.201` (L2 advertisement) |
-| AI Endpoint (in-cluster) | `https://phi-4-deployment.foundry-local.svc:5000` |
+| AI Endpoint (in-cluster) | `https://phi-4-deployment.foundry-local-operator.svc:5000` |
 | IoT Ops MQTT (edge mode) | `aio-broker-insecure:1883` |
 
 ---
@@ -163,45 +163,36 @@ User:
 
 **Talk track (Minute 5–6, continued)**
 
-The **Foundry Local Inference Operator** (Private Preview, v0.0.1-prp.5) is a Kubernetes operator that manages the entire SLM lifecycle declaratively.
+The **Foundry Local Inference Operator** is a Kubernetes operator that manages the entire SLM lifecycle declaratively. Model deployments must use the extension's namespace (`foundry-local-operator` on this cluster).
 
-### What You Declare (61 lines of YAML)
+### What You Declare
 
 ```yaml
-# Model resource — what to download
-apiVersion: foundrylocal.azure.com/v1
-kind: Model
-metadata:
-  name: phi-4-mini
-spec:
-  source:
-    type: catalog
-    catalog:
-      alias: "phi-4-mini"
-
 # ModelDeployment — how to run it
 apiVersion: foundrylocal.azure.com/v1
 kind: ModelDeployment
 metadata:
   name: phi-4-deployment
+  namespace: foundry-local-operator
 spec:
   model:
-    ref: phi-4-mini
+    catalog:
+      name: Phi-4-mini-instruct-cuda-gpu
+      version: "5"
   workloadType: generative
   compute: gpu
   replicas: 1
+  port: 5000
   resources:
     limits:
       gpu: 1
-  authentication:
-    enabled: true
 ```
 
 ### What the Operator Does Automatically
 
 1. **Downloads** Phi-4-mini-instruct from the Foundry catalog (~2 GB)
 2. **Schedules** the inference pod on the GPU node (NVIDIA A2)
-3. **Creates** a ClusterIP service at `phi-4-deployment.foundry-local.svc:5000`
+3. **Creates** a ClusterIP service at `phi-4-deployment.foundry-local-operator.svc:5000`
 4. **Issues** TLS certificates via cert-manager
 5. **Generates** an API key stored in a Kubernetes secret (`phi-4-deployment-api-keys`)
 6. **Exposes** an **OpenAI-compatible API** (`/v1/chat/completions`) — drop-in replacement for cloud endpoints
