@@ -298,6 +298,8 @@ if (-not $SkipTrustManager) {
             --namespace cert-manager `
             --version $trustManagerVersion `
             --set app.trust.namespace=cert-manager `
+            --set secretTargets.enabled=true `
+            --set-string "secretTargets.authorizedSecrets[0]=$foundryOpNs-ca-bundle" `
             --wait --timeout 5m 2>&1
 
         if ($LASTEXITCODE -ne 0) {

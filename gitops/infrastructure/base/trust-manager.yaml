@@ -24,3 +24,8 @@ spec:
   upgrade:
     remediation:
       retries: 3
+  values:
+    secretTargets:
+      enabled: true
+      authorizedSecrets:
+        - foundry-local-operator-ca-bundle

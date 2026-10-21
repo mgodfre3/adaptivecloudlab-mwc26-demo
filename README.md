@@ -365,6 +365,9 @@ CRDs and an accepted `istio` GatewayClass before installation. PDX uses Istio
 `1.30.4` base and control-plane charts as its Gateway API provider; mesh
 injection is not required. Restore these prerequisites before the extension
 when rebuilding the cluster.
+Trust-manager must also enable Secret targets for the
+`foundry-local-operator-ca-bundle` name; the GitOps release authorizes that name
+explicitly rather than granting writes to every Secret name.
 
 The PDX GPU pool uses the stable label `workload=gpu` and the
 `nvidia.com/gpu=present:NoSchedule` taint. This keeps Arc management deployments
