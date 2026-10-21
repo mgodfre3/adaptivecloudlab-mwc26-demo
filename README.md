@@ -356,6 +356,15 @@ Local extension before upgrading it. On `pdx-mwc-26`, this is
 GitOps manifest and `k8s/foundry-local.yaml` use this namespace. For another
 installation, use its extension release namespace in both the manifest and
 `EDGE_AI_ENDPOINT`; do not create a separate model namespace.
+The PDX environment file sets both namespace variables to
+`foundry-local-operator`; the platform installer defaults models to the operator
+namespace and rejects a conflicting override before making cluster changes.
+
+The `1.260914.4` Foundry extension also requires Gateway API v1.4.0 experimental
+CRDs and an accepted `istio` GatewayClass before installation. PDX uses Istio
+`1.30.4` base and control-plane charts as its Gateway API provider; mesh
+injection is not required. Restore these prerequisites before the extension
+when rebuilding the cluster.
 
 The PDX GPU pool uses the stable label `workload=gpu` and the
 `nvidia.com/gpu=present:NoSchedule` taint. This keeps Arc management deployments

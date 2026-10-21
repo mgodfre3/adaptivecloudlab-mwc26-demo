@@ -113,7 +113,10 @@ $iotOpsExtName   = if ($envVars["IOT_OPS_EXTENSION_NAME"])   { $envVars["IOT_OPS
 $iotOpsNs        = if ($envVars["IOT_OPS_NAMESPACE"])        { $envVars["IOT_OPS_NAMESPACE"] }        else { "$prefix-iot" }
 $mqttBrokerSvc   = if ($envVars["MQTT_BROKER_SERVICE"])      { $envVars["MQTT_BROKER_SERVICE"] }      else { "$prefix-mqtt" }
 $foundryOpNs     = if ($envVars["FOUNDRY_OPERATOR_NAMESPACE"]) { $envVars["FOUNDRY_OPERATOR_NAMESPACE"] } else { "$prefix-foundry-op" }
-$foundryModelNs  = if ($envVars["FOUNDRY_MODEL_NAMESPACE"])    { $envVars["FOUNDRY_MODEL_NAMESPACE"] }    else { "$prefix-foundry-mdl" }
+$foundryModelNs  = if ($envVars["FOUNDRY_MODEL_NAMESPACE"])    { $envVars["FOUNDRY_MODEL_NAMESPACE"] }    else { $foundryOpNs }
+if (-not $SkipFoundry -and $foundryModelNs -ne $foundryOpNs) {
+    throw "Foundry models must use the operator namespace. Set FOUNDRY_MODEL_NAMESPACE to '$foundryOpNs' or omit it."
+}
 
 # Ingress
 $ingressCtrl     = $envVars["INGRESS_CONTROLLER"]
@@ -344,13 +347,6 @@ if (-not $SkipFoundry) {
         if (-not $nsExists) {
             Write-Host "  📦 Creating namespace $foundryOpNs..." -ForegroundColor Yellow
             kubectl create namespace $foundryOpNs 2>&1
-        }
-
-        # Create model namespace
-        $nsExists = kubectl get ns $foundryModelNs -o name 2>$null
-        if (-not $nsExists) {
-            Write-Host "  📦 Creating namespace $foundryModelNs..." -ForegroundColor Yellow
-            kubectl create namespace $foundryModelNs 2>&1
         }
 
         # Retrieve Foundry API key from Key Vault (if stored there)
