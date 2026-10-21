@@ -367,6 +367,9 @@ cluster-generated pool name. Preserve these settings when rebuilding a pool.
 The PDX configuration also preserves three control-plane nodes and API IP
 `172.21.229.179` through the optional `CONTROL_PLANE_COUNT`,
 `CONTROL_PLANE_VM_SIZE`, and `CONTROL_PLANE_IP` provisioning settings.
+The two PDX user workers use the supported `Standard_K8S3_v1` size
+(4 vCPUs and 6 GiB each), retaining their CPU count while leaving host memory
+headroom for three control planes and the unchanged NVIDIA A2 worker.
 
 On the shared PDX VLAN31 logical network, `.130` belongs to a host storage
 adapter and must never be reused as the API address. Unattached Azure Local
