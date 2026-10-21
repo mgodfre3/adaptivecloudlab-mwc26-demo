@@ -811,6 +811,15 @@ MQTT_TOPIC_PREFIX=drone/telemetry
 
 In **edge mode** (`DATA_MODE=edge`), the dashboard connects directly to the **Azure IoT Operations MQTT broker** (`aio-broker`) running on the cluster. This keeps all raw telemetry on-premises — no data leaves the edge until explicitly exported.
 
+The restored PDX installation also has a TLS/SAT listener at
+`aio-broker.azure-iot-operations.svc.cluster.local:18883`. Its authentication
+configuration retains both `aio-broker` for existing clients and `aio-internal`
+for IoT Operations' internal services. Restoring only the old `aio-broker`
+audience causes the schema registry and Akri ADR service to fail authentication,
+even when the Azure extension reports success. MQTT v5 SAT clients must send
+`K8S-SAT` as the enhanced authentication method and the projected token as
+authentication data, not as a username/password pair.
+
 ### Selective Cloud Export (Data Sovereignty)
 
 The file `k8s/iot-ops-dataflow.yaml` defines an **AIO Dataflow** that selectively exports anonymized metrics to IoT Hub:
