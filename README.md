@@ -365,8 +365,19 @@ when configured; the PDX configuration enables this taint. Model manifests
 tolerate it, and the PDX DCGM selector uses the stable label rather than a
 cluster-generated pool name. Preserve these settings when rebuilding a pool.
 The PDX configuration also preserves three control-plane nodes and API IP
-`172.21.229.130` through the optional `CONTROL_PLANE_COUNT`,
+`172.21.229.179` through the optional `CONTROL_PLANE_COUNT`,
 `CONTROL_PLANE_VM_SIZE`, and `CONTROL_PLANE_IP` provisioning settings.
+
+On the shared PDX VLAN31 logical network, `.130` belongs to a host storage
+adapter and must never be reused as the API address. Unattached Azure Local
+NICs `pdx-mwc-26-reserved-130` and `pdx-mwc-26-reserved-180` through
+`pdx-mwc-26-reserved-185` in `pdx-rg` reserve that storage address and the
+MetalLB range in IPAM. Keep these reservation NICs unattached and retain them
+while the logical network's allocation pool includes those addresses.
+The other host's storage address, `.131`, is currently occupied in IPAM by
+an unrelated cluster's worker. If that allocation is removed, reserve `.131`
+before creating or scaling workloads on this network. Correcting that
+pre-existing allocation requires a separate maintenance window for its owner.
 
 ```powershell
 # Connect to the cluster
