@@ -68,6 +68,9 @@ $customLocId     = $envVars["CUSTOM_LOCATION_ID"]
 $k8sVersion      = $envVars["KUBERNETES_VERSION"]
 $vnetId          = $envVars["VNET_RESOURCE_ID"]
 $aadGroupIds     = $envVars["AAD_ADMIN_GROUP_IDS"]
+$controlPlaneCount = $envVars["CONTROL_PLANE_COUNT"]
+$controlPlaneSize  = $envVars["CONTROL_PLANE_VM_SIZE"]
+$controlPlaneIp    = $envVars["CONTROL_PLANE_IP"]
 
 $rgName          = if ($envVars["RESOURCE_GROUP_NAME"]) { $envVars["RESOURCE_GROUP_NAME"] } else { "$prefix-rg" }
 $clusterName     = if ($envVars["CLUSTER_NAME"])        { $envVars["CLUSTER_NAME"] }        else { "$prefix-aks" }
@@ -85,6 +88,7 @@ $userPoolCount   = $envVars["USER_POOL_COUNT"]
 $gpuPoolName     = if ($envVars["GPU_POOL_NAME"])        { $envVars["GPU_POOL_NAME"] }        else { "${prefix}gpu" }
 $gpuPoolSize     = $envVars["GPU_POOL_VM_SIZE"]
 $gpuPoolCount    = $envVars["GPU_POOL_COUNT"]
+$gpuNodeTaint    = $envVars["GPU_NODE_TAINT"]
 
 # ── Validation ───────────────────────────────────────────────────────────────
 $missing = @()
@@ -196,6 +200,15 @@ $createArgs = @(
 )
 
 # Add AAD admin group IDs if specified
+if ($controlPlaneCount) {
+    $createArgs += @("--control-plane-count", $controlPlaneCount)
+}
+if ($controlPlaneSize) {
+    $createArgs += @("--control-plane-vm-size", $controlPlaneSize)
+}
+if ($controlPlaneIp) {
+    $createArgs += @("--control-plane-ip", $controlPlaneIp)
+}
 if ($aadGroupIds) {
     $createArgs += @("--aad-admin-group-object-ids", $aadGroupIds)
 }
@@ -237,14 +250,21 @@ $gpuPoolExists = az aksarc nodepool show --cluster-name $clusterName --resource-
 if ($gpuPoolExists) {
     Write-Host "  ⏭️  Node pool '$gpuPoolName' already exists – skipping" -ForegroundColor DarkGray
 } else {
-    az aksarc nodepool add `
-        --cluster-name $clusterName `
-        --resource-group $rgName `
-        --name $gpuPoolName `
-        --node-count $gpuPoolCount `
-        --node-vm-size $gpuPoolSize `
-        --os-type Linux `
-        --output none
+    $gpuArgs = @(
+        "aksarc", "nodepool", "add",
+        "--cluster-name", $clusterName,
+        "--resource-group", $rgName,
+        "--name", $gpuPoolName,
+        "--node-count", $gpuPoolCount,
+        "--node-vm-size", $gpuPoolSize,
+        "--os-type", "Linux",
+        "--labels", "workload=gpu",
+        "--output", "none"
+    )
+    if ($gpuNodeTaint) {
+        $gpuArgs += @("--node-taints", $gpuNodeTaint)
+    }
+    az @gpuArgs
     if ($LASTEXITCODE -ne 0) { Write-Error "Failed to add GPU node pool"; exit 1 }
     Write-Host "  ✅ GPU node pool added" -ForegroundColor Green
 }

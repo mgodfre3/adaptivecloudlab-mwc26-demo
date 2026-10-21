@@ -140,4 +140,4 @@ patches:
       - op: add
         path: /spec/values/nodeSelector
         value:
-          msft.microsoft/nodepool-name: pdx-aks-ead6c2bf-pdxgpu
+          workload: gpu

@@ -357,6 +357,17 @@ GitOps manifest and `k8s/foundry-local.yaml` use this namespace. For another
 installation, use its extension release namespace in both the manifest and
 `EDGE_AI_ENDPOINT`; do not create a separate model namespace.
 
+The PDX GPU pool uses the stable label `workload=gpu` and the
+`nvidia.com/gpu=present:NoSchedule` taint. This keeps Arc management deployments
+off GPU workers without cordoning the node or blocking model replacements.
+The cluster creation script labels new GPU pools and applies `GPU_NODE_TAINT`
+when configured; the PDX configuration enables this taint. Model manifests
+tolerate it, and the PDX DCGM selector uses the stable label rather than a
+cluster-generated pool name. Preserve these settings when rebuilding a pool.
+The PDX configuration also preserves three control-plane nodes and API IP
+`172.21.229.130` through the optional `CONTROL_PLANE_COUNT`,
+`CONTROL_PLANE_VM_SIZE`, and `CONTROL_PLANE_IP` provisioning settings.
+
 ```powershell
 # Connect to the cluster
 az connectedk8s proxy --name <cluster> --resource-group <rg>
@@ -379,6 +390,10 @@ spec:
   workloadType: generative
   replicas: 1
   port: 5000
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
   resources:
     requests:
       cpu: "1"
