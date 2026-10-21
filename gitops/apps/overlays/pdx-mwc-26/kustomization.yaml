@@ -3,6 +3,28 @@ kind: Kustomization
 resources:
   - ../../base
 patches:
+  # Preserve the existing PDX dashboard UI overrides when Flux reconciles.
+  - target:
+      kind: Deployment
+      name: dashboard
+      namespace: drone-demo
+    patch: |
+      - op: add
+        path: /spec/template/spec/volumes
+        value:
+          - name: tile-overrides
+            configMap:
+              name: dashboard-tile-overrides
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts
+        value:
+          - name: tile-overrides
+            mountPath: /app/static/js/app.js
+            subPath: app.js
+          - name: tile-overrides
+            mountPath: /app/templates/cell_towers.html
+            subPath: cell_towers.html
+
   # -- Drone Demo ConfigMap: PDX-specific values --
   - target:
       kind: ConfigMap

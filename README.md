@@ -409,6 +409,10 @@ delete the old namespace as a shortcut. Verify authenticated inference and the
 dashboard after cutover. Model download caches are ephemeral, so allow time to
 reload the model from the model store.
 
+The PDX GitOps overlay also preserves the dashboard's existing
+`dashboard-tile-overrides` ConfigMap mounts in `drone-demo`. Keep this
+cluster-managed ConfigMap available when reconciling the PDX dashboard.
+
 > **Important:** If the Helm OCI install fails with `pending-install`, use the bundled `.tgz`:
 > ```powershell
 > helm install inference-operator ./inference-operator-0.0.1-prp.5.tgz \
